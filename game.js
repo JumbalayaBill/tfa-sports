@@ -219,6 +219,7 @@ const UI = {
     getEventIcon(icon) {
         const icons = {
             ladder:   '<div class="pixel-icon">&#128508;</div>',
+            boot:     '<div class="pixel-icon">&#129406;</div>',
         };
         return icons[icon] || '<div class="pixel-icon">?</div>';
     },
@@ -267,25 +268,42 @@ const UI = {
         document.getElementById('game-prompt').classList.add('hidden');
     },
 
-    showResult(title, score, unit, message, detail, rankings) {
+    showResult({ title, score, unit, message, time, attemptLabel, scores, totalScore, totalAttempts }) {
         document.getElementById('result-title').textContent = title;
+        document.getElementById('result-attempt-label').textContent = attemptLabel || '';
         document.getElementById('result-score').textContent =
             typeof score === 'number' ? score.toFixed(2) : score;
         document.getElementById('result-unit').textContent = unit || '';
-        document.getElementById('result-detail').textContent = detail || '';
+        document.getElementById('result-time').textContent = time || '';
         document.getElementById('result-message').textContent = message || '';
+        document.getElementById('result-ranking').innerHTML = '';
 
-        const rankEl = document.getElementById('result-ranking');
-        if (rankings && rankings.length > 0) {
-            rankEl.innerHTML = rankings.map((r, i) => `
-                <div class="ranking-row ${i === 0 ? 'first' : ''}">
-                    <span class="rank">${i + 1}.</span>
-                    <span class="rank-name">${r.name}</span>
-                    <span class="rank-score">${r.score.toFixed(2)} ${unit}</span>
-                </div>
-            `).join('');
+        // Total box with breakdown
+        const totalBox = document.getElementById('result-total-box');
+        if (scores && scores.length > 0 && totalAttempts > 1) {
+            totalBox.classList.remove('hidden');
+
+            // Build breakdown rows
+            const breakdown = document.getElementById('result-breakdown');
+            let rows = '';
+            for (let i = 0; i < totalAttempts; i++) {
+                const s = scores[i];
+                const isCurrent = i === scores.length - 1;
+                const isFuture = i >= scores.length;
+                const cls = isCurrent ? 'current' : isFuture ? 'future' : '';
+                const label = 'Attempt ' + (i + 1);
+                const val = isFuture ? '---' :
+                    (isCurrent ? '+ ' : '') + s.toFixed(2) + ' ' + unit;
+                rows += `<div class="result-breakdown-row ${cls}">
+                    <span>${label}</span><span>${val}</span>
+                </div>`;
+            }
+            breakdown.innerHTML = rows;
+
+            document.getElementById('result-total-score').textContent = totalScore.toFixed(2);
+            document.getElementById('result-total-unit').textContent = unit;
         } else {
-            rankEl.innerHTML = '';
+            totalBox.classList.add('hidden');
         }
 
         this.showScreen('screen-result');
@@ -1372,6 +1390,642 @@ EventRenderers.ladder = function(ctx, state) {
     ctx.restore(); // end shake transform
 };
 
+// ============================================================
+//  BOOT THROWING - Event Implementation
+// ============================================================
+
+const BOOT = {
+    minDist: 6,             // minimum chopping block distance (meters)
+    maxDist: 20,            // maximum distance
+    blockWidth: 1.2,        // chopping block width in meters (landing zone)
+    maxSpin: 5,             // max spin rotations
+    spinNeedleBaseSpeed: 0.8, // needle oscillation base speed
+    powerChargeRate: 0.6,   // power charges per second while holding
+    flightDuration: 1.2,    // base flight time seconds
+    maxWind: 4.0,           // max wind m/s (+ = tailwind, - = headwind)
+    gravity: 9.8,
+    // Scoring
+    basePointsPerMeter: 3,  // base points per meter of distance
+    spinMultBase: 1.0,      // spin multiplier = spinMultBase + spins * spinMultPerSpin
+    spinMultPerSpin: 0.4,
+    // Precision: how far off you can be and still score
+    landingTolerance: 0.3,  // extra meters beyond block edge for partial score
+};
+
+EventLogic.boot = {
+    init(state) {
+        state.phase = 'ready';
+        state.timer = 0;
+        state.frame = 0;
+        state.score = 0;
+
+        // Randomize distance and wind
+        const attemptNum = (Game.currentAttempt || 0);
+        // Distance increases with attempt: attempt 0=easy, 1=medium, 2=hard
+        const minD = BOOT.minDist + attemptNum * 3;
+        const maxD = Math.min(BOOT.maxDist, minD + 6);
+        state.blockDist = minD + Math.random() * (maxD - minD);
+        state.blockDist = Math.round(state.blockDist * 10) / 10;
+
+        // Wind: random, stronger on later attempts
+        const windRange = BOOT.maxWind * (0.4 + attemptNum * 0.3);
+        state.wind = (Math.random() - 0.5) * 2 * windRange;
+        state.wind = Math.round(state.wind * 10) / 10;
+
+        // Spin phase - oscillating needle
+        state.spin = 0;             // final spin value (0 to maxSpin)
+        state.spinNeedle = 0;       // needle position 0-1
+        state.spinNeedleDir = 1;    // direction
+        state.spinSet = false;
+
+        // Power phase - hold to charge
+        state.power = 0;            // 0 to 1 (charges while holding)
+        state.powerCharging = false;
+        state.powerSet = false;
+        state.powerValue = 0;       // locked power
+
+        // Flight phase
+        state.bootX = 0;            // 0 to 1 progress
+        state.bootArc = 0;          // y offset (arc)
+        state.bootAngle = 0;        // rotation
+        state.flightTime = 0;
+        state.flightTotal = 0;
+
+        // Landing
+        state.landingX = 0;         // where boot actually lands (meters)
+        state.landed = false;
+        state.onBlock = false;
+        state.landingScore = 0;
+        state.resultTimer = 0;
+
+        // Visual
+        state.athleteFrame = 0;
+        state.throwAnim = 0;
+        state.particles = [];
+    },
+
+    handleInput(state, code, type) {
+        if (code !== 'Space') return;
+
+        // Ready phase -> start spin gauge
+        if (state.phase === 'ready' && type === 'down') {
+            state.phase = 'spin';
+            SFX.play('charge');
+            return;
+        }
+
+        // Spin phase - press space to lock the oscillating needle
+        if (state.phase === 'spin' && type === 'down') {
+            state.spinSet = true;
+            // Map needle position to spin zone (same zone layout as renderer)
+            const weights = [32, 16, 8, 4, 2, 1];
+            const totalWeight = weights.reduce((a, b) => a + b, 0);
+            let accum = 0;
+            state.spin = 0;
+            for (let i = 0; i < weights.length; i++) {
+                accum += weights[i];
+                if (state.spinNeedle < accum / totalWeight) {
+                    state.spin = i;
+                    break;
+                }
+            }
+            if (state.spinNeedle >= 1) state.spin = BOOT.maxSpin;
+            state.phase = 'power';
+            state.power = 0;
+            SFX.play('tick');
+            return;
+        }
+
+        // Power phase - hold to charge, release to set
+        if (state.phase === 'power') {
+            if (type === 'down') {
+                state.powerCharging = true;
+            }
+            if (type === 'up' && state.powerCharging) {
+                state.powerCharging = false;
+                state.powerSet = true;
+                state.powerValue = state.power;
+                state.phase = 'throw';
+                state.throwAnim = 1.0;
+                SFX.play('throw');
+            }
+            return;
+        }
+    },
+
+    update(state, dt) {
+        state.frame++;
+        state.timer += dt;
+
+        // --- Spin needle oscillation ---
+        if (state.phase === 'spin') {
+            // Needle bounces back and forth, speed increases over time
+            const needleSpeed = 0.8 + state.timer * 0.3;
+            state.spinNeedle += state.spinNeedleDir * needleSpeed * dt;
+            if (state.spinNeedle >= 1) { state.spinNeedle = 1; state.spinNeedleDir = -1; }
+            if (state.spinNeedle <= 0) { state.spinNeedle = 0; state.spinNeedleDir = 1; }
+        }
+
+        // --- Power charging ---
+        if (state.phase === 'power' && state.powerCharging) {
+            state.power = Math.min(1, state.power + BOOT.powerChargeRate * dt);
+            if (state.frame % 8 === 0) SFX.play('charge');
+        }
+
+        // --- Throw animation (brief windup before flight) ---
+        if (state.phase === 'throw') {
+            state.throwAnim -= dt * 4;
+            if (state.throwAnim <= 0) {
+                state.throwAnim = 0;
+                state.phase = 'flight';
+                // Calculate landing position based on power + wind
+                const powerMeters = state.powerValue * (BOOT.maxDist + 4);
+                // Wind effect: tailwind adds distance, headwind reduces it
+                const windEffect = state.wind * 0.3;
+                state.landingX = powerMeters + windEffect;
+                // Spin makes landing less precise (wobble)
+                const spinWobble = (Math.random() - 0.5) * state.spin * 0.4;
+                state.landingX += spinWobble;
+                state.landingX = Math.max(0, state.landingX);
+                // Flight duration proportional to distance
+                state.flightTotal = BOOT.flightDuration * (0.6 + state.powerValue * 0.8);
+                state.flightTime = 0;
+                SFX.play('woosh');
+            }
+        }
+
+        // --- Flight ---
+        if (state.phase === 'flight') {
+            state.flightTime += dt;
+            const t = Math.min(1, state.flightTime / state.flightTotal);
+            state.bootX = t;
+            // Parabolic arc
+            state.bootArc = 4 * t * (1 - t);
+            // Spin rotation
+            state.bootAngle += state.spin * 2 * Math.PI * dt * 1.5;
+
+            if (t >= 1) {
+                state.phase = 'landing';
+                state.landed = true;
+                // Check if on block
+                const blockCenter = state.blockDist;
+                const halfBlock = BOOT.blockWidth / 2;
+                const dist = Math.abs(state.landingX - blockCenter);
+                if (dist <= halfBlock) {
+                    // Direct hit!
+                    state.onBlock = true;
+                    const spinMult = BOOT.spinMultBase + state.spin * BOOT.spinMultPerSpin;
+                    state.landingScore = Math.round(state.blockDist * BOOT.basePointsPerMeter * spinMult);
+                    SFX.play('thunk');
+                } else if (dist <= halfBlock + BOOT.landingTolerance) {
+                    // Glancing hit — partial score
+                    state.onBlock = true;
+                    const closeness = 1 - (dist - halfBlock) / BOOT.landingTolerance;
+                    const spinMult = BOOT.spinMultBase + state.spin * BOOT.spinMultPerSpin;
+                    state.landingScore = Math.round(state.blockDist * BOOT.basePointsPerMeter * spinMult * closeness * 0.5);
+                    SFX.play('thunk');
+                } else {
+                    state.onBlock = false;
+                    state.landingScore = 0;
+                    SFX.play('miss');
+                }
+                state.score = state.landingScore;
+                state.resultTimer = 2.5;
+
+                // Landing particles
+                for (let i = 0; i < 12; i++) {
+                    state.particles.push({
+                        x: 0, y: 0,
+                        vx: (Math.random() - 0.5) * 80,
+                        vy: -Math.random() * 60 - 10,
+                        life: 1.0,
+                        color: state.onBlock ? '#FFD700' : '#8B6914',
+                    });
+                }
+            }
+        }
+
+        // --- Landing result display ---
+        if (state.phase === 'landing') {
+            state.resultTimer -= dt;
+            // Update particles
+            state.particles.forEach(p => {
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.vy += 120 * dt;
+                p.life -= dt * 1.2;
+            });
+            state.particles = state.particles.filter(p => p.life > 0);
+
+            if (state.resultTimer <= 0) {
+                state.phase = 'done';
+            }
+        }
+
+        // Update HUD
+        let hudScore = '';
+        if (state.phase === 'spin') hudScore = 'SPIN: ' + state.spin.toFixed(1);
+        else if (state.phase === 'power') hudScore = 'POWER';
+        else if (state.phase === 'landing') hudScore = state.onBlock ? state.landingScore + ' pts' : 'MISS!';
+
+        UI.updateHUD({
+            eventName: 'Boot Throwing',
+            playerName: Game.players[Game.currentPlayerIndex]?.name || '',
+            score: hudScore,
+            timer: 'Dist: ' + state.blockDist.toFixed(1) + 'm  Wind: ' + (state.wind > 0 ? '+' : '') + state.wind.toFixed(1),
+            attempt: EVENTS.find(e => e.id === 'boot').attempts > 1
+                ? `ATTEMPT ${Game.currentAttempt + 1}/${EVENTS.find(e => e.id === 'boot').attempts}`
+                : '',
+        });
+    },
+};
+
+EventRenderers.boot = function(ctx, state) {
+    const W = 900, H = 500;
+
+    // --- Sky ---
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, 220);
+    skyGrad.addColorStop(0, '#5DADE2');
+    skyGrad.addColorStop(1, '#AED6F1');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // --- Clouds ---
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    const co = (state.frame * 0.2) % W;
+    [[80,50,50],[300,35,40],[550,55,45],[780,40,35]].forEach(([bx,by,r]) => {
+        const cx = (bx + co) % (W + 80) - 40;
+        ctx.beginPath();
+        ctx.arc(cx, by, r, 0, Math.PI * 2);
+        ctx.arc(cx + r * 0.5, by - r * 0.15, r * 0.65, 0, Math.PI * 2);
+        ctx.arc(cx - r * 0.4, by + r * 0.1, r * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // --- Background trees ---
+    ctx.fillStyle = '#2E7D32';
+    for (let i = 0; i < 15; i++) {
+        const tx = i * 65 + 20;
+        const ty = 210;
+        const th = 30 + (i * 7 % 20);
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx - 12, ty + th);
+        ctx.lineTo(tx + 12, ty + th);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#1B5E20';
+        ctx.beginPath();
+        ctx.moveTo(tx, ty - 10);
+        ctx.lineTo(tx - 10, ty + 15);
+        ctx.lineTo(tx + 10, ty + 15);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#2E7D32';
+    }
+
+    // --- Ground ---
+    const groundY = 380;
+    const grassGrad = ctx.createLinearGradient(0, 220, 0, H);
+    grassGrad.addColorStop(0, '#66BB6A');
+    grassGrad.addColorStop(0.3, '#4CAF50');
+    grassGrad.addColorStop(1, '#2E7D32');
+    ctx.fillStyle = grassGrad;
+    ctx.fillRect(0, 220, W, H - 220);
+
+    // --- Field scale: convert meters to pixels ---
+    // The view spans from 0m (left) to maxDist+5m (right)
+    const viewMaxM = BOOT.maxDist + 5;
+    const fieldLeft = 80;
+    const fieldRight = W - 40;
+    const fieldW = fieldRight - fieldLeft;
+    const mToX = (m) => fieldLeft + (m / viewMaxM) * fieldW;
+
+    // --- Distance markers ---
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    for (let m = 5; m <= 20; m += 5) {
+        const mx = mToX(m);
+        ctx.fillRect(mx, groundY - 2, 1, 4);
+        ctx.fillText(m + 'm', mx, groundY + 14);
+    }
+
+    // --- Chopping block ---
+    const blockX = mToX(state.blockDist);
+    const blockW = (BOOT.blockWidth / viewMaxM) * fieldW;
+    // Stump
+    ctx.fillStyle = '#5D4037';
+    ctx.fillRect(blockX - blockW / 2, groundY - 35, blockW, 35);
+    // Stump top
+    ctx.fillStyle = '#8D6E63';
+    ctx.fillRect(blockX - blockW / 2 - 2, groundY - 37, blockW + 4, 5);
+    // Bark lines
+    ctx.strokeStyle = '#4E342E';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 3; i++) {
+        const lx = blockX - blockW / 2 + 4 + i * (blockW / 3);
+        ctx.beginPath();
+        ctx.moveTo(lx, groundY - 32);
+        ctx.lineTo(lx, groundY);
+        ctx.stroke();
+    }
+    // Top ring pattern
+    ctx.strokeStyle = '#A1887F';
+    ctx.beginPath();
+    ctx.arc(blockX, groundY - 35, blockW / 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // --- Landing zone highlight ---
+    if (state.phase === 'ready' || state.phase === 'spin' || state.phase === 'power') {
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.15)';
+        const zoneW = blockW + (BOOT.landingTolerance / viewMaxM) * fieldW * 2;
+        ctx.fillRect(blockX - zoneW / 2, groundY - 40, zoneW, 42);
+    }
+
+    // --- Athlete (left side) ---
+    const athleteX = fieldLeft - 10;
+    const athleteBaseY = groundY;
+    if (state.phase === 'throw' && state.throwAnim > 0) {
+        // Throwing animation: lean forward
+        ctx.save();
+        ctx.translate(athleteX, athleteBaseY);
+        ctx.rotate(-state.throwAnim * 0.3);
+        ctx.translate(-athleteX, -athleteBaseY);
+        AvatarRenderer.draw(ctx, athleteX, athleteBaseY, 1.2, state.frame);
+        ctx.restore();
+    } else {
+        AvatarRenderer.draw(ctx, athleteX, athleteBaseY, 1.2, 0);
+    }
+
+    // --- Boot in flight ---
+    if (state.phase === 'flight' || state.phase === 'landing') {
+        const bootMeters = state.phase === 'flight'
+            ? state.bootX * state.landingX
+            : state.landingX;
+        const bootPxX = mToX(bootMeters);
+        const arcHeight = 120 + state.powerValue * 60;
+        const bootPxY = state.phase === 'flight'
+            ? groundY - 30 - state.bootArc * arcHeight
+            : groundY - 30;
+        const angle = state.bootAngle;
+
+        ctx.save();
+        ctx.translate(bootPxX, bootPxY);
+        ctx.rotate(angle);
+
+        // Draw boot shape
+        ctx.fillStyle = '#4E342E';
+        // Sole
+        ctx.fillRect(-12, 2, 24, 5);
+        // Boot body
+        ctx.fillRect(-10, -10, 18, 14);
+        // Boot shaft (top part)
+        ctx.fillRect(-10, -20, 12, 12);
+        // Toe
+        ctx.fillStyle = '#3E2723';
+        ctx.fillRect(6, -4, 6, 8);
+        // Laces
+        ctx.strokeStyle = '#D7CCC8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-6, -8); ctx.lineTo(-2, -8);
+        ctx.moveTo(-6, -12); ctx.lineTo(-2, -12);
+        ctx.moveTo(-6, -16); ctx.lineTo(-2, -16);
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Landing particles
+        if (state.phase === 'landing') {
+            state.particles.forEach(p => {
+                ctx.fillStyle = p.color + Math.floor(p.life * 255).toString(16).padStart(2, '0');
+                ctx.beginPath();
+                ctx.arc(bootPxX + p.x, bootPxY + p.y, 2 + p.life * 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+    }
+
+    // --- Boot in hand (before throw) ---
+    if (state.phase === 'ready' || state.phase === 'spin' || state.phase === 'power' || state.phase === 'throw') {
+        if (state.phase !== 'flight') {
+            const handX = athleteX + 12;
+            const handY = athleteBaseY - 28 - (state.throwAnim || 0) * 15;
+            ctx.save();
+            ctx.translate(handX, handY);
+            ctx.rotate(-0.3 + (state.spin / BOOT.maxSpin) * 1.5);
+            ctx.fillStyle = '#4E342E';
+            ctx.fillRect(-6, -5, 12, 8);
+            ctx.fillRect(-6, -10, 8, 6);
+            ctx.fillStyle = '#3E2723';
+            ctx.fillRect(4, -3, 4, 5);
+            ctx.restore();
+        }
+    }
+
+    // --- Wind indicator ---
+    const windX = W / 2;
+    const windY = 240;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(windX - 70, windY - 12, 140, 24);
+    ctx.fillStyle = '#FFF';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    const windLabel = state.wind > 0 ? 'TAILWIND' : state.wind < 0 ? 'HEADWIND' : 'NO WIND';
+    const windArrows = state.wind > 0 ? ' >>>' : state.wind < 0 ? '<<< ' : '';
+    ctx.fillText(windArrows + ' ' + Math.abs(state.wind).toFixed(1) + ' m/s ' + windLabel + windArrows, windX, windY + 4);
+
+    // --- Spin gauge (during spin phase) ---
+    // The gauge has non-linear zones: 1 spin is a big zone, 5 spins is a tiny zone
+    if (state.phase === 'spin') {
+        const gX = 120, gY = 265, gW = 260, gH = 28;
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(gX - 6, gY - 22, gW + 12, gH + 50);
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('PRESS SPACE TO SET SPIN', gX + gW / 2, gY - 8);
+
+        // Draw zones: each spin level gets a zone, higher = narrower
+        // Zone widths: 1 spin zone is wide, 5 spin zone is tiny
+        // Using exponential distribution so 5 spins is really hard to hit
+        const zones = [];
+        const totalWeight = 32 + 16 + 8 + 4 + 2 + 1; // 6 zones: 0, 1, 2, 3, 4, 5 spins
+        const weights = [32, 16, 8, 4, 2, 1]; // 0 spin is huge, 5 spin is tiny
+        let accum = 0;
+        for (let i = 0; i < weights.length; i++) {
+            const start = accum / totalWeight;
+            accum += weights[i];
+            const end = accum / totalWeight;
+            zones.push({ spin: i, start, end, w: end - start });
+        }
+
+        // Draw zone backgrounds
+        const zoneColors = ['#555', '#4CAF50', '#8BC34A', '#FFC107', '#FF9800', '#E53935'];
+        zones.forEach((z, i) => {
+            ctx.fillStyle = zoneColors[i];
+            ctx.fillRect(gX + z.start * gW, gY, z.w * gW, gH);
+            // Zone border
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(gX + z.start * gW, gY, z.w * gW, gH);
+            // Label
+            ctx.fillStyle = i <= 2 ? '#000' : '#FFF';
+            ctx.font = z.w * gW > 20 ? 'bold 11px monospace' : 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            const label = i === 0 ? '0' : i + '';
+            if (z.w * gW > 12) {
+                ctx.fillText(label, gX + (z.start + z.w / 2) * gW, gY + gH / 2 + 4);
+            }
+        });
+
+        // Multiplier labels below
+        ctx.font = '9px monospace';
+        ctx.fillStyle = '#999';
+        ctx.textAlign = 'center';
+        zones.forEach((z, i) => {
+            if (z.w * gW > 18) {
+                const mult = BOOT.spinMultBase + i * BOOT.spinMultPerSpin;
+                ctx.fillText('x' + mult.toFixed(1), gX + (z.start + z.w / 2) * gW, gY + gH + 11);
+            }
+        });
+
+        // Needle / indicator
+        const needleX = gX + state.spinNeedle * gW;
+        ctx.strokeStyle = '#FFF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(needleX, gY - 3);
+        ctx.lineTo(needleX, gY + gH + 3);
+        ctx.stroke();
+        // Needle triangle top
+        ctx.fillStyle = '#FFF';
+        ctx.beginPath();
+        ctx.moveTo(needleX, gY - 5);
+        ctx.lineTo(needleX - 4, gY - 10);
+        ctx.lineTo(needleX + 4, gY - 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Current spin preview
+        let currentSpin = 0;
+        for (const z of zones) {
+            if (state.spinNeedle >= z.start && state.spinNeedle < z.end) {
+                currentSpin = z.spin;
+                break;
+            }
+        }
+        if (state.spinNeedle >= 1) currentSpin = BOOT.maxSpin;
+        const prevMult = BOOT.spinMultBase + currentSpin * BOOT.spinMultPerSpin;
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(currentSpin + ' SPINS  (x' + prevMult.toFixed(1) + ')', gX + gW / 2, gY + gH + 26);
+    }
+
+    // --- Power meter (during power phase) - hold to charge ---
+    if (state.phase === 'power') {
+        const pmX = 120, pmY = 265, pmW = 260, pmH = 28;
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(pmX - 6, pmY - 22, pmW + 12, pmH + 40);
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('HOLD SPACE TO CHARGE - RELEASE TO THROW', pmX + pmW / 2, pmY - 8);
+
+        // Bar background
+        ctx.fillStyle = '#333';
+        ctx.fillRect(pmX, pmY, pmW, pmH);
+
+        // Power fill
+        const powerRatio = state.power;
+        const pColor = powerRatio < 0.3 ? '#4CAF50' : powerRatio < 0.6 ? '#FFC107' :
+                        powerRatio < 0.85 ? '#FF9800' : '#E53935';
+        ctx.fillStyle = pColor;
+        ctx.fillRect(pmX, pmY, pmW * powerRatio, pmH);
+
+        // Distance markers on the bar
+        ctx.font = '8px monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.textAlign = 'center';
+        for (let m = 5; m <= 20; m += 5) {
+            const ratio = m / (BOOT.maxDist + 4);
+            const mx = pmX + ratio * pmW;
+            ctx.fillRect(mx, pmY, 1, pmH);
+            ctx.fillText(m + 'm', mx, pmY + pmH + 10);
+        }
+
+        // Power percentage
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(Math.round(powerRatio * 100) + '%', pmX + pmW / 2, pmY + pmH / 2 + 4);
+
+        // Spin set reminder
+        ctx.fillStyle = '#FFD700';
+        ctx.font = '10px monospace';
+        const spinMult = BOOT.spinMultBase + state.spin * BOOT.spinMultPerSpin;
+        ctx.fillText('Spin: ' + Math.round(state.spin) + '  (x' + spinMult.toFixed(1) + ')', pmX + pmW / 2, pmY + pmH + 24);
+    }
+
+    // --- Ready prompt ---
+    if (state.phase === 'ready') {
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.fillRect(W / 2 - 180, 290, 360, 60);
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 18px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('PRESS SPACE TO START', W / 2, 320);
+        ctx.fillStyle = '#FFF';
+        ctx.font = '13px monospace';
+        ctx.fillText('Distance: ' + state.blockDist.toFixed(1) + 'm', W / 2, 340);
+    }
+
+    // --- Landing result overlay ---
+    if (state.phase === 'landing') {
+        if (state.onBlock) {
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 42px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(state.landingScore + ' PTS!', W / 2, 160);
+
+            const spinMult = BOOT.spinMultBase + state.spin * BOOT.spinMultPerSpin;
+            ctx.fillStyle = '#FFF';
+            ctx.font = '16px monospace';
+            ctx.fillText(
+                state.blockDist.toFixed(1) + 'm x ' + spinMult.toFixed(1) + ' spin',
+                W / 2, 185
+            );
+        } else {
+            ctx.fillStyle = '#E53935';
+            ctx.font = 'bold 36px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('MISS!', W / 2, 160);
+
+            const diff = state.landingX - state.blockDist;
+            const label = diff > 0 ? 'TOO FAR (' + Math.abs(diff).toFixed(1) + 'm)'
+                                   : 'TOO SHORT (' + Math.abs(diff).toFixed(1) + 'm)';
+            ctx.fillStyle = '#FFF';
+            ctx.font = '14px monospace';
+            ctx.fillText(label, W / 2, 185);
+        }
+    }
+
+    // --- Landing marker (where boot landed, after landing) ---
+    if (state.phase === 'landing') {
+        const landPx = mToX(state.landingX);
+        ctx.strokeStyle = state.onBlock ? '#FFD700' : '#E53935';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(landPx - 8, groundY + 5);
+        ctx.lineTo(landPx + 8, groundY + 5);
+        ctx.moveTo(landPx, groundY + 1);
+        ctx.lineTo(landPx, groundY + 9);
+        ctx.stroke();
+    }
+};
+
 // ---- Input Handler ----
 const Input = {
     keys: {},
@@ -1646,29 +2300,34 @@ const Game = {
             if (score > result.bestScore) result.bestScore = score;
         }
 
-        // Check for world record (based on total across all attempts)
-        const isRecord = Save.updateRecord(event.id, result.totalScore, player.name, event.lowerIsBetter);
+        // Check for world record (based on total across all attempts, only after last attempt)
+        const attemptNum = result.scores.length;
+        const totalAttempts = event.attempts;
+        const isLastAttempt = attemptNum >= totalAttempts;
+        const isRecord = isLastAttempt &&
+            Save.updateRecord(event.id, result.totalScore, player.name, event.lowerIsBetter);
         const message = isRecord ? 'NEW RECORD!' :
             (this.eventState.foul ? 'FOUL!' : '');
 
         if (isRecord) SFX.play('fanfare');
 
-        const attemptNum = result.scores.length;
-        const totalAttempts = event.attempts;
-        let detail = 'Time: ' + (this.eventState.timer ? this.eventState.timer.toFixed(1) + 's' : '0.0s');
-        if (totalAttempts > 1) {
-            detail += '  |  Total: ' + result.totalScore.toFixed(2) + ' ' + event.unit
-                + ' (' + attemptNum + '/' + totalAttempts + ')';
-        }
+        const time = this.eventState.timer
+            ? 'Time: ' + this.eventState.timer.toFixed(1) + 's'
+            : '';
 
-        UI.showResult(
-            event.name,
-            this.eventState.foul ? 'FOUL' : score,
-            this.eventState.foul ? '' : event.unit,
+        UI.showResult({
+            title: event.name,
+            score: this.eventState.foul ? 'FOUL' : score,
+            unit: this.eventState.foul ? '' : event.unit,
             message,
-            detail,
-            null
-        );
+            time,
+            attemptLabel: totalAttempts > 1
+                ? 'ATTEMPT ' + attemptNum + ' OF ' + totalAttempts
+                : '',
+            scores: result.scores,
+            totalScore: result.totalScore,
+            totalAttempts: totalAttempts,
+        });
     },
 
     nextTurn() {

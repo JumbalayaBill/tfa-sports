@@ -504,10 +504,79 @@ body {
     margin-top: -10px;
 }
 
-.result-detail {
-    font-size: 18px;
+.result-attempt-label {
+    font-size: 14px;
     color: var(--text-primary);
-    min-height: 24px;
+    letter-spacing: 2px;
+    min-height: 18px;
+}
+
+.result-time {
+    font-size: 14px;
+    color: #999;
+    min-height: 18px;
+}
+
+.result-total-box {
+    background: var(--bg-card);
+    border: 2px solid var(--accent);
+    padding: 14px 28px;
+    margin: 8px 0;
+    min-width: 260px;
+    text-align: center;
+}
+
+.result-total-box.hidden {
+    display: none;
+}
+
+.result-total-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.result-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.result-breakdown-row.current {
+    color: var(--accent);
+    font-weight: bold;
+}
+
+.result-breakdown-row.future {
+    color: #555;
+}
+
+.result-total-line {
+    height: 2px;
+    background: var(--accent);
+    margin-bottom: 8px;
+}
+
+.result-total-label {
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 3px;
+    margin-bottom: 2px;
+}
+
+.result-total-score {
+    font-size: 36px;
+    font-weight: bold;
+    color: var(--accent);
+    text-shadow: 2px 2px 0 #000;
+}
+
+.result-total-unit {
+    font-size: 16px;
+    color: var(--text-primary);
 }
 
 .result-message {

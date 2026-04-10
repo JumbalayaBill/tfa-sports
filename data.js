@@ -37,6 +37,21 @@ const EVENTS = [
         totalRungs: 20,
         ladderHeight: 10.0,  // meters
     },
+    {
+        id: 'boot',
+        name: 'Boot Throwing',
+        description: 'Hurl a boot and land it on the chopping block! Add spin for bonus points, but watch the wind!',
+        icon: 'boot',
+        category: 'field',
+        attempts: 3,
+        unit: 'pts',
+        lowerIsBetter: false,
+        controls: [
+            { keys: 'SPACE (tap)', desc: 'Stop the needle to set spin' },
+            { keys: 'SPACE (hold)', desc: 'Charge power, release to throw' },
+        ],
+        worldRecord: 300,
+    },
 ];
 
 // --- Medal point values ---
@@ -189,4 +204,9 @@ const SOUNDS = {
     creak:      { type: 'sine', duration: 0.2, freqStart: 180, freqEnd: 120, gain: 0.12 },
     fall:       { type: 'noise', duration: 0.6, freq: 200, decay: 0.4, gain: 0.4 },
     victory:    { type: 'square', duration: 1.0, notes: [523, 659, 784, 1047, 1319], noteLen: 0.2 },
+    throw:      { type: 'noise', duration: 0.2, freq: 300, decay: 0.1, gain: 0.25 },
+    woosh:      { type: 'sine', duration: 0.3, freqStart: 600, freqEnd: 200, gain: 0.15 },
+    thunk:      { type: 'noise', duration: 0.12, freq: 150, decay: 0.06, gain: 0.35 },
+    miss:       { type: 'noise', duration: 0.25, freq: 100, decay: 0.15, gain: 0.2 },
+    charge:     { type: 'sine', duration: 0.06, freqStart: 400, freqEnd: 500, gain: 0.1 },
 };

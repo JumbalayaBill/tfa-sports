@@ -103,10 +103,18 @@
         <div id="screen-result" class="screen">
             <div class="result-content">
                 <h2 id="result-title">RESULT</h2>
+                <div id="result-attempt-label" class="result-attempt-label"></div>
                 <div id="result-score" class="result-score">0.00</div>
                 <div id="result-unit" class="result-unit">m</div>
-                <div id="result-detail" class="result-detail"></div>
+                <div id="result-time" class="result-time"></div>
                 <div id="result-message" class="result-message"></div>
+                <div id="result-total-box" class="result-total-box hidden">
+                    <div class="result-total-breakdown" id="result-breakdown"></div>
+                    <div class="result-total-line"></div>
+                    <div class="result-total-label">TOTAL</div>
+                    <div class="result-total-score" id="result-total-score">0.00</div>
+                    <div class="result-total-unit" id="result-total-unit">m</div>
+                </div>
                 <div id="result-ranking" class="result-ranking"></div>
                 <button class="btn btn-primary" id="result-continue-btn" onclick="Game.nextTurn()">CONTINUE</button>
             </div>
@@ -165,6 +173,12 @@
                     <h3>LADDER CLIMBING</h3>
                     <div class="control-row"><span class="key">LEFT / RIGHT</span> <span>Alternate to climb rungs</span></div>
                     <div class="control-row"><span class="key">TIP</span> <span>Keep alternating evenly to stay balanced!</span></div>
+                </div>
+                <div class="controls-info">
+                    <h3>BOOT THROWING</h3>
+                    <div class="control-row"><span class="key">SPACE (tap)</span> <span>Stop the needle to set spin</span></div>
+                    <div class="control-row"><span class="key">SPACE (hold)</span> <span>Charge power, release to throw</span></div>
+                    <div class="control-row"><span class="key">TIP</span> <span>More spin = higher multiplier but harder to land!</span></div>
                 </div>
                 <p class="hint">Each event has unique controls shown before the event starts.</p>
             </div>
