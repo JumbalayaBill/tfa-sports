@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>TFA Sports</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+
+        <!-- TITLE SCREEN -->
+        <div id="screen-title" class="screen active">
+            <div class="title-logo">
+                <h1>TFA SPORTS</h1>
+                <div class="title-subtitle">THE ULTIMATE ATHLETIC CHALLENGE</div>
+                <div class="title-year">- 1994 -</div>
+            </div>
+            <div class="title-menu">
+                <button class="btn btn-primary" onclick="UI.showScreen('screen-player-select')">START GAME</button>
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-records')">RECORDS</button>
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-how-to-play')">HOW TO PLAY</button>
+            </div>
+            <div class="title-footer">
+                <span class="blink">INSERT COIN TO CONTINUE</span>
+            </div>
+        </div>
+
+        <!-- PLAYER SELECT SCREEN -->
+        <div id="screen-player-select" class="screen">
+            <div class="screen-header">
+                <h2>SELECT PLAYERS</h2>
+            </div>
+            <div class="player-select-content">
+                <div class="player-count-select">
+                    <label>NUMBER OF PLAYERS</label>
+                    <div class="player-count-buttons">
+                        <button class="btn btn-small player-count-btn active" data-count="1">1</button>
+                        <button class="btn btn-small player-count-btn" data-count="2">2</button>
+                        <button class="btn btn-small player-count-btn" data-count="3">3</button>
+                        <button class="btn btn-small player-count-btn" data-count="4">4</button>
+                    </div>
+                </div>
+                <div id="player-names-container" class="player-names">
+                    <!-- Filled dynamically -->
+                </div>
+                <div class="player-country-select" id="country-select-container">
+                    <!-- Filled dynamically -->
+                </div>
+            </div>
+            <div class="screen-footer">
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">BACK</button>
+                <button class="btn btn-primary" onclick="UI.showScreen('screen-event-select')">NEXT</button>
+            </div>
+        </div>
+
+        <!-- EVENT SELECT SCREEN -->
+        <div id="screen-event-select" class="screen">
+            <div class="screen-header">
+                <h2>SELECT EVENTS</h2>
+            </div>
+            <div id="event-list" class="event-list">
+                <!-- Filled dynamically from data.js -->
+            </div>
+            <div class="screen-footer">
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-player-select')">BACK</button>
+                <button class="btn btn-primary" onclick="Game.startCompetition()">START</button>
+            </div>
+        </div>
+
+        <!-- GAME SCREEN -->
+        <div id="screen-game" class="screen">
+            <div class="game-hud">
+                <div class="hud-left">
+                    <span id="hud-event-name" class="hud-event">EVENT</span>
+                    <span id="hud-player-name" class="hud-player">PLAYER 1</span>
+                </div>
+                <div class="hud-center">
+                    <span id="hud-score" class="hud-score">0</span>
+                </div>
+                <div class="hud-right">
+                    <span id="hud-timer" class="hud-timer"></span>
+                    <span id="hud-attempt" class="hud-attempt">ATTEMPT 1/3</span>
+                </div>
+            </div>
+            <canvas id="game-canvas" width="900" height="500"></canvas>
+            <div id="game-prompt" class="game-prompt hidden"></div>
+        </div>
+
+        <!-- EVENT INTRO SCREEN -->
+        <div id="screen-event-intro" class="screen">
+            <div class="event-intro-content">
+                <h2 id="event-intro-name">EVENT NAME</h2>
+                <div id="event-intro-icon" class="event-intro-icon"></div>
+                <p id="event-intro-desc" class="event-intro-desc">Event description here.</p>
+                <div id="event-intro-controls" class="event-intro-controls"></div>
+                <button class="btn btn-primary" onclick="Game.beginEvent()">READY</button>
+            </div>
+        </div>
+
+        <!-- RESULT SCREEN (after each event attempt) -->
+        <div id="screen-result" class="screen">
+            <div class="result-content">
+                <h2 id="result-title">RESULT</h2>
+                <div id="result-score" class="result-score">0.00</div>
+                <div id="result-unit" class="result-unit">m</div>
+                <div id="result-message" class="result-message"></div>
+                <div id="result-ranking" class="result-ranking"></div>
+                <button class="btn btn-primary" id="result-continue-btn" onclick="Game.nextTurn()">CONTINUE</button>
+            </div>
+        </div>
+
+        <!-- EVENT STANDINGS SCREEN -->
+        <div id="screen-standings" class="screen">
+            <div class="standings-content">
+                <h2 id="standings-event-name">EVENT STANDINGS</h2>
+                <div id="standings-table" class="standings-table">
+                    <!-- Filled dynamically -->
+                </div>
+                <button class="btn btn-primary" onclick="Game.proceedFromStandings()">CONTINUE</button>
+            </div>
+        </div>
+
+        <!-- FINAL RESULTS / PODIUM SCREEN -->
+        <div id="screen-podium" class="screen">
+            <div class="podium-content">
+                <h2>FINAL STANDINGS</h2>
+                <canvas id="podium-canvas" width="900" height="400"></canvas>
+                <div id="podium-scores" class="podium-scores">
+                    <!-- Filled dynamically -->
+                </div>
+                <button class="btn btn-primary" onclick="UI.showScreen('screen-title')">MAIN MENU</button>
+            </div>
+        </div>
+
+        <!-- RECORDS SCREEN -->
+        <div id="screen-records" class="screen">
+            <div class="screen-header">
+                <h2>WORLD RECORDS</h2>
+            </div>
+            <div id="records-list" class="records-list">
+                <!-- Filled dynamically -->
+            </div>
+            <div class="screen-footer">
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">BACK</button>
+            </div>
+        </div>
+
+        <!-- HOW TO PLAY SCREEN -->
+        <div id="screen-how-to-play" class="screen">
+            <div class="screen-header">
+                <h2>HOW TO PLAY</h2>
+            </div>
+            <div class="how-to-play-content">
+                <p>Compete in a series of athletic events against your friends!</p>
+                <div class="controls-info">
+                    <h3>GENERAL CONTROLS</h3>
+                    <div class="control-row"><span class="key">LEFT / RIGHT</span> <span>Alternate to perform actions</span></div>
+                    <div class="control-row"><span class="key">SPACE</span> <span>Special action (event-specific)</span></div>
+                    <div class="control-row"><span class="key">ENTER</span> <span>Confirm</span></div>
+                </div>
+                <div class="controls-info">
+                    <h3>LADDER CLIMBING</h3>
+                    <div class="control-row"><span class="key">LEFT / RIGHT</span> <span>Alternate to climb rungs</span></div>
+                    <div class="control-row"><span class="key">TIP</span> <span>Keep alternating evenly to stay balanced!</span></div>
+                </div>
+                <p class="hint">Each event has unique controls shown before the event starts.</p>
+            </div>
+            <div class="screen-footer">
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">BACK</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="data.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>

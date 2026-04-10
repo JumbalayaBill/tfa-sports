@@ -1,0 +1,815 @@
+/* ======================================================
+   TFA SPORTS - Retro 90s Stylesheet
+   ====================================================== */
+
+/* --- CSS Variables --- */
+:root {
+    --bg-primary:     #0A0A1A;
+    --bg-secondary:   #1A1A2E;
+    --bg-card:        #16213E;
+    --text-primary:   #E0E0E0;
+    --text-bright:    #FFFFFF;
+    --accent:         #FFD700;
+    --accent-hover:   #FFC107;
+    --primary:        #1E88E5;
+    --primary-hover:  #1565C0;
+    --secondary:      #424242;
+    --secondary-hover:#616161;
+    --success:        #4CAF50;
+    --danger:         #E53935;
+    --gold:           #FFD700;
+    --silver:         #C0C0C0;
+    --bronze:         #CD7F32;
+    --font-main:      'Courier New', Courier, monospace;
+    --border-retro:   2px solid #FFD700;
+    --shadow-retro:   4px 4px 0px #000;
+}
+
+/* --- Reset & Base --- */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--font-main);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+#app {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: 10px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+/* --- Screens --- */
+.screen {
+    display: none;
+    width: 100%;
+    max-width: 920px;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 20px;
+}
+
+.screen.active {
+    display: flex;
+}
+
+/* --- Title Screen --- */
+.title-logo {
+    text-align: center;
+    padding: 40px 0 20px;
+}
+
+.title-logo h1 {
+    font-size: 64px;
+    color: var(--accent);
+    text-shadow:
+        3px 3px 0 #E53935,
+        6px 6px 0 #1E88E5,
+        9px 9px 0 #000;
+    letter-spacing: 8px;
+    line-height: 1;
+}
+
+.title-subtitle {
+    font-size: 14px;
+    color: var(--text-primary);
+    letter-spacing: 4px;
+    margin-top: 10px;
+}
+
+.title-year {
+    font-size: 18px;
+    color: var(--accent);
+    margin-top: 5px;
+}
+
+.title-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 260px;
+    margin-top: 20px;
+}
+
+.title-footer {
+    margin-top: 40px;
+    font-size: 14px;
+    color: var(--accent);
+}
+
+/* --- Blink animation --- */
+.blink {
+    animation: blink 1.2s step-start infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* --- Buttons --- */
+.btn {
+    font-family: var(--font-main);
+    font-size: 16px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    padding: 12px 24px;
+    border: var(--border-retro);
+    cursor: pointer;
+    transition: all 0.1s;
+    box-shadow: var(--shadow-retro);
+    outline: none;
+}
+
+.btn:active {
+    box-shadow: 1px 1px 0px #000;
+    transform: translate(3px, 3px);
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: #000;
+}
+
+.btn-primary:hover {
+    background: var(--accent-hover);
+}
+
+.btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+    background: var(--secondary-hover);
+}
+
+.btn-small {
+    font-size: 14px;
+    padding: 8px 16px;
+    box-shadow: 2px 2px 0px #000;
+}
+
+.btn-small.active {
+    background: var(--accent);
+    color: #000;
+}
+
+/* --- Screen Header --- */
+.screen-header {
+    text-align: center;
+    width: 100%;
+    border-bottom: var(--border-retro);
+    padding-bottom: 12px;
+}
+
+.screen-header h2 {
+    font-size: 28px;
+    color: var(--accent);
+    letter-spacing: 4px;
+    text-shadow: 2px 2px 0 #000;
+}
+
+/* --- Screen Footer --- */
+.screen-footer {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+/* --- Player Select --- */
+.player-select-content {
+    width: 100%;
+    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.player-count-select {
+    text-align: center;
+}
+
+.player-count-select label {
+    display: block;
+    margin-bottom: 10px;
+    color: var(--accent);
+    font-size: 14px;
+    letter-spacing: 2px;
+}
+
+.player-count-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.player-names {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.player-input-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-card);
+    padding: 10px 14px;
+    border: 1px solid #333;
+}
+
+.player-input-row label {
+    color: var(--accent);
+    font-weight: bold;
+    min-width: 30px;
+}
+
+.player-input-row input,
+.player-input-row select {
+    font-family: var(--font-main);
+    font-size: 14px;
+    background: var(--bg-primary);
+    color: var(--text-bright);
+    border: 1px solid #555;
+    padding: 6px 10px;
+    outline: none;
+}
+
+.player-input-row input {
+    flex: 1;
+    text-transform: uppercase;
+}
+
+.player-input-row select {
+    width: 140px;
+}
+
+.player-input-row input:focus,
+.player-input-row select:focus {
+    border-color: var(--accent);
+}
+
+/* --- Event Select --- */
+.event-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.event-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--bg-card);
+    border: 1px solid #333;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: border-color 0.1s;
+}
+
+.event-card:hover {
+    border-color: var(--accent);
+}
+
+.event-card-icon {
+    font-size: 28px;
+    width: 44px;
+    text-align: center;
+}
+
+.pixel-icon {
+    font-size: 28px;
+    line-height: 1;
+}
+
+.event-card-info {
+    flex: 1;
+}
+
+.event-card-info h3 {
+    font-size: 16px;
+    color: var(--accent);
+    margin-bottom: 2px;
+}
+
+.event-card-info p {
+    font-size: 12px;
+    color: #999;
+}
+
+.event-card-toggle {
+    display: flex;
+    align-items: center;
+}
+
+.event-card-toggle input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+/* --- Game Screen --- */
+#screen-game {
+    padding: 0;
+    gap: 0;
+}
+
+.game-hud {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    padding: 8px 16px;
+    font-size: 14px;
+    border-bottom: 2px solid var(--accent);
+}
+
+.hud-left, .hud-right {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.hud-event {
+    color: var(--accent);
+    font-weight: bold;
+    font-size: 16px;
+}
+
+.hud-player {
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.hud-score {
+    font-size: 32px;
+    color: var(--accent);
+    font-weight: bold;
+    text-shadow: 2px 2px 0 #000;
+}
+
+.hud-timer {
+    color: var(--text-bright);
+    font-size: 16px;
+    text-align: right;
+}
+
+.hud-attempt {
+    color: #999;
+    font-size: 12px;
+    text-align: right;
+}
+
+#game-canvas {
+    display: block;
+    background: #000;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+.game-prompt {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: var(--accent);
+    font-size: 18px;
+    padding: 10px 24px;
+    border: var(--border-retro);
+    letter-spacing: 2px;
+    text-align: center;
+    z-index: 10;
+}
+
+.game-prompt.hidden {
+    display: none;
+}
+
+/* --- Event Intro Screen --- */
+.event-intro-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 40px 20px;
+}
+
+.event-intro-content h2 {
+    font-size: 36px;
+    color: var(--accent);
+    text-shadow: 3px 3px 0 #000;
+    letter-spacing: 4px;
+}
+
+.event-intro-icon {
+    font-size: 64px;
+}
+
+.event-intro-desc {
+    font-size: 16px;
+    color: var(--text-primary);
+    max-width: 500px;
+}
+
+.event-intro-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 10px 0;
+}
+
+/* --- Controls Info --- */
+.controls-info {
+    text-align: left;
+    max-width: 400px;
+    margin: 20px auto;
+}
+
+.controls-info h3 {
+    color: var(--accent);
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+.control-row {
+    display: flex;
+    gap: 16px;
+    padding: 6px 0;
+    border-bottom: 1px solid #333;
+    font-size: 14px;
+}
+
+.control-row .key {
+    color: var(--accent);
+    min-width: 150px;
+    font-weight: bold;
+}
+
+.hint {
+    font-size: 12px;
+    color: #777;
+    margin-top: 16px;
+    text-align: center;
+}
+
+/* --- Result Screen --- */
+.result-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 40px 20px;
+}
+
+.result-content h2 {
+    font-size: 24px;
+    color: var(--text-primary);
+    letter-spacing: 3px;
+}
+
+.result-score {
+    font-size: 72px;
+    color: var(--accent);
+    font-weight: bold;
+    text-shadow: 3px 3px 0 #000;
+}
+
+.result-unit {
+    font-size: 24px;
+    color: var(--text-primary);
+    margin-top: -10px;
+}
+
+.result-message {
+    font-size: 20px;
+    color: var(--danger);
+    font-weight: bold;
+    min-height: 28px;
+}
+
+.result-ranking {
+    width: 100%;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ranking-row {
+    display: flex;
+    gap: 10px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    font-size: 14px;
+}
+
+.ranking-row.first {
+    background: rgba(255, 215, 0, 0.15);
+    border: 1px solid var(--accent);
+}
+
+.rank {
+    color: var(--accent);
+    min-width: 30px;
+}
+
+.rank-name {
+    flex: 1;
+    text-align: left;
+}
+
+.rank-score {
+    color: var(--text-bright);
+}
+
+/* --- Standings Screen --- */
+.standings-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 40px 20px;
+}
+
+.standings-content h2 {
+    font-size: 24px;
+    color: var(--accent);
+    letter-spacing: 3px;
+}
+
+.standings-table {
+    width: 100%;
+    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.standings-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border: 1px solid #333;
+    font-size: 15px;
+}
+
+.standings-row.gold {
+    border-color: var(--gold);
+    background: rgba(255, 215, 0, 0.1);
+}
+
+.standings-row.silver {
+    border-color: var(--silver);
+    background: rgba(192, 192, 192, 0.08);
+}
+
+.standings-row.bronze {
+    border-color: var(--bronze);
+    background: rgba(205, 127, 50, 0.08);
+}
+
+.standings-rank {
+    font-size: 20px;
+    font-weight: bold;
+    color: var(--accent);
+    min-width: 30px;
+}
+
+.standings-name {
+    flex: 1;
+    text-align: left;
+}
+
+.standings-score {
+    color: var(--text-bright);
+    min-width: 100px;
+    text-align: right;
+}
+
+.standings-points {
+    color: var(--success);
+    min-width: 70px;
+    text-align: right;
+    font-weight: bold;
+}
+
+/* --- Podium Screen --- */
+.podium-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 20px;
+}
+
+.podium-content h2 {
+    font-size: 28px;
+    color: var(--accent);
+    text-shadow: 2px 2px 0 #000;
+    letter-spacing: 4px;
+}
+
+#podium-canvas {
+    display: block;
+    max-width: 100%;
+    image-rendering: pixelated;
+}
+
+.podium-scores {
+    width: 100%;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.podium-score-row {
+    display: flex;
+    gap: 10px;
+    padding: 8px 14px;
+    background: var(--bg-card);
+    font-size: 15px;
+}
+
+.podium-score-row.gold { border-left: 4px solid var(--gold); }
+.podium-score-row.silver { border-left: 4px solid var(--silver); }
+.podium-score-row.bronze { border-left: 4px solid var(--bronze); }
+
+.podium-rank {
+    color: var(--accent);
+    min-width: 30px;
+    font-weight: bold;
+}
+
+.podium-name {
+    flex: 1;
+    text-align: left;
+}
+
+.podium-pts {
+    color: var(--accent);
+    font-weight: bold;
+}
+
+/* --- Records Screen --- */
+.records-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.record-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border: 1px solid #333;
+    font-size: 14px;
+}
+
+.record-event {
+    flex: 1;
+    color: var(--accent);
+    font-weight: bold;
+}
+
+.record-score {
+    color: var(--text-bright);
+    min-width: 100px;
+    text-align: right;
+}
+
+.record-player {
+    color: var(--text-primary);
+    min-width: 100px;
+    text-align: right;
+}
+
+.record-date {
+    color: #777;
+    min-width: 90px;
+    text-align: right;
+    font-size: 12px;
+}
+
+/* --- How to Play --- */
+.how-to-play-content {
+    max-width: 500px;
+    text-align: center;
+}
+
+.how-to-play-content p {
+    margin-bottom: 16px;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* --- Scrollbar (retro) --- */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--secondary);
+    border: 1px solid var(--accent);
+}
+
+/* --- Responsive --- */
+@media (max-width: 600px) {
+    .title-logo h1 {
+        font-size: 40px;
+        letter-spacing: 4px;
+    }
+
+    .title-subtitle {
+        font-size: 11px;
+        letter-spacing: 2px;
+    }
+
+    .screen-header h2 {
+        font-size: 22px;
+    }
+
+    .btn {
+        font-size: 14px;
+        padding: 10px 18px;
+    }
+
+    .player-input-row {
+        flex-wrap: wrap;
+    }
+
+    .player-input-row select {
+        width: 100%;
+    }
+
+    .hud-score {
+        font-size: 24px;
+    }
+
+    .result-score {
+        font-size: 48px;
+    }
+
+    .event-intro-content h2 {
+        font-size: 26px;
+    }
+
+    .standings-row, .record-row {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+}
+
+/* --- Scanline overlay effect (retro CRT feel) --- */
+#app::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.06) 0px,
+        rgba(0, 0, 0, 0.06) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    z-index: 9999;
+}
