@@ -1462,6 +1462,22 @@ EventLogic.boot = {
         state.athleteFrame = 0;
         state.throwAnim = 0;
         state.particles = [];
+
+        // Seagull - random chance to appear (~60%)
+        state.seagull = null;
+        state.seagullHit = false;
+        state.seagullBonus = 0;
+        if (Math.random() < 0.6) {
+            const fromLeft = Math.random() < 0.5;
+            state.seagull = {
+                x: fromLeft ? -30 : 930,      // start off-screen
+                y: 120 + Math.random() * 100,  // random height in the sky
+                dir: fromLeft ? 1 : -1,
+                speed: 60 + Math.random() * 50, // px/sec
+                wingFrame: 0,
+                alive: true,
+            };
+        }
     },
 
     handleInput(state, code, type) {
@@ -1532,6 +1548,14 @@ EventLogic.boot = {
             if (state.frame % 8 === 0) SFX.play('charge');
         }
 
+        // --- Seagull movement ---
+        if (state.seagull && state.seagull.alive) {
+            state.seagull.x += state.seagull.dir * state.seagull.speed * dt;
+            state.seagull.wingFrame += dt * 6;
+            // Gentle bob
+            state.seagull.y += Math.sin(state.seagull.wingFrame * 0.7) * 0.3;
+        }
+
         // --- Throw animation (brief windup before flight) ---
         if (state.phase === 'throw') {
             state.throwAnim -= dt * 4;
@@ -1540,8 +1564,9 @@ EventLogic.boot = {
                 state.phase = 'flight';
                 // Calculate landing position based on power + wind
                 const powerMeters = state.powerValue * (BOOT.maxDist + 4);
-                // Wind effect: tailwind adds distance, headwind reduces it
-                const windEffect = state.wind * 0.3;
+                // Wind effect: tailwind (+) pushes boot further, headwind (-) holds it back
+                // Scaled so max wind (4 m/s) shifts landing by ~5m
+                const windEffect = state.wind * 1.2;
                 state.landingX = powerMeters + windEffect;
                 // Spin makes landing less precise (wobble)
                 const spinWobble = (Math.random() - 0.5) * state.spin * 0.4;
@@ -1563,6 +1588,40 @@ EventLogic.boot = {
             state.bootArc = 4 * t * (1 - t);
             // Spin rotation
             state.bootAngle += state.spin * 2 * Math.PI * dt * 1.5;
+
+            // Seagull collision check
+            if (state.seagull && state.seagull.alive && !state.seagullHit) {
+                // Calculate boot pixel position (same formula as renderer)
+                const viewMaxM = BOOT.maxDist + 5;
+                const fieldLeft = 80, fieldRight = 860;
+                const fieldW = fieldRight - fieldLeft;
+                const bootMeters = t * state.landingX;
+                const bootPxX = fieldLeft + (bootMeters / viewMaxM) * fieldW;
+                const arcHeight = 120 + state.powerValue * 60;
+                const bootPxY = 380 - 30 - state.bootArc * arcHeight;
+
+                const dx = bootPxX - state.seagull.x;
+                const dy = bootPxY - state.seagull.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < 25) {
+                    state.seagullHit = true;
+                    state.seagull.alive = false;
+                    state.seagullBonus = 25;
+                    SFX.play('thunk');
+                    // Feather particles
+                    for (let i = 0; i < 15; i++) {
+                        state.particles.push({
+                            x: state.seagull.x - bootPxX,
+                            y: state.seagull.y - bootPxY,
+                            vx: (Math.random() - 0.5) * 100,
+                            vy: (Math.random() - 0.5) * 80,
+                            life: 1.2,
+                            color: '#F5F5F5',
+                        });
+                    }
+                }
+            }
 
             if (t >= 1) {
                 state.phase = 'landing';
@@ -1589,8 +1648,9 @@ EventLogic.boot = {
                     state.landingScore = 0;
                     SFX.play('miss');
                 }
+                state.landingScore += state.seagullBonus;
                 state.score = state.landingScore;
-                state.resultTimer = 2.5;
+                state.resultTimer = state.seagullHit ? 3.0 : 2.5;
 
                 // Landing particles
                 for (let i = 0; i < 12; i++) {
@@ -1824,17 +1884,99 @@ EventRenderers.boot = function(ctx, state) {
         }
     }
 
+    // --- Seagull ---
+    if (state.seagull) {
+        const sg = state.seagull;
+        if (sg.alive) {
+            ctx.save();
+            ctx.translate(sg.x, sg.y);
+            ctx.scale(sg.dir, 1); // flip based on direction
+
+            // Body
+            ctx.fillStyle = '#F5F5F5';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 10, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head
+            ctx.beginPath();
+            ctx.arc(10, -3, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Beak
+            ctx.fillStyle = '#FF8F00';
+            ctx.beginPath();
+            ctx.moveTo(14, -3);
+            ctx.lineTo(19, -2);
+            ctx.lineTo(14, -1);
+            ctx.closePath();
+            ctx.fill();
+
+            // Eye
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(11, -4, 1, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Wings (animated flap)
+            const wingAngle = Math.sin(sg.wingFrame) * 0.6;
+            ctx.fillStyle = '#E0E0E0';
+            // Left wing
+            ctx.save();
+            ctx.translate(-2, -3);
+            ctx.rotate(-wingAngle);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-14, -6);
+            ctx.lineTo(-10, 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+            // Right wing
+            ctx.save();
+            ctx.translate(-2, -3);
+            ctx.rotate(wingAngle);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-14, 6);
+            ctx.lineTo(-10, -2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+
+            ctx.restore();
+        }
+
+        // Feather explosion (when hit - particles drawn relative to boot)
+        // These are already in the main particles array with white color
+    }
+
+    // --- Seagull hit banner ---
+    if (state.seagullHit && state.phase === 'landing' && state.resultTimer > 1.5) {
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 22px monospace';
+        ctx.textAlign = 'center';
+        const bounce = Math.sin(state.frame * 0.2) * 3;
+        ctx.fillText('SEAGULL HIT! +' + state.seagullBonus + ' BONUS!', W / 2, 210 + bounce);
+    }
+
     // --- Wind indicator ---
     const windX = W / 2;
     const windY = 240;
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(windX - 70, windY - 12, 140, 24);
-    ctx.fillStyle = '#FFF';
-    ctx.font = 'bold 11px monospace';
+    const windAbs = Math.abs(state.wind);
+    const windStrong = windAbs > 2.5;
+    ctx.fillStyle = windStrong ? 'rgba(180,0,0,0.5)' : 'rgba(0,0,0,0.4)';
+    ctx.fillRect(windX - 120, windY - 14, 240, 28);
+    ctx.fillStyle = windStrong ? '#FFD700' : '#FFF';
+    ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'center';
-    const windLabel = state.wind > 0 ? 'TAILWIND' : state.wind < 0 ? 'HEADWIND' : 'NO WIND';
-    const windArrows = state.wind > 0 ? ' >>>' : state.wind < 0 ? '<<< ' : '';
-    ctx.fillText(windArrows + ' ' + Math.abs(state.wind).toFixed(1) + ' m/s ' + windLabel + windArrows, windX, windY + 4);
+    if (Math.abs(state.wind) < 0.3) {
+        ctx.fillText('WIND: CALM', windX, windY + 4);
+    } else {
+        const windLabel = state.wind > 0 ? 'TAILWIND (less power)' : 'HEADWIND (more power)';
+        const arrows = state.wind > 0 ? '>>> ' : '<<< ';
+        ctx.fillText(arrows + windAbs.toFixed(1) + ' m/s ' + windLabel, windX, windY + 4);
+    }
 
     // --- Spin gauge (during spin phase) ---
     // The gauge has non-linear zones: 1 spin is a big zone, 5 spins is a tiny zone
