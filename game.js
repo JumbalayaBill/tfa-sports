@@ -266,11 +266,12 @@ const UI = {
         document.getElementById('game-prompt').classList.add('hidden');
     },
 
-    showResult(title, score, unit, message, rankings) {
+    showResult(title, score, unit, message, detail, rankings) {
         document.getElementById('result-title').textContent = title;
         document.getElementById('result-score').textContent =
             typeof score === 'number' ? score.toFixed(2) : score;
         document.getElementById('result-unit').textContent = unit || '';
+        document.getElementById('result-detail').textContent = detail || '';
         document.getElementById('result-message').textContent = message || '';
 
         const rankEl = document.getElementById('result-ranking');
@@ -1335,11 +1336,16 @@ const Game = {
 
         if (isRecord) SFX.play('fanfare');
 
+        const timeUsed = this.eventState.timer
+            ? 'Time: ' + this.eventState.timer.toFixed(1) + 's'
+            : '';
+
         UI.showResult(
             event.name,
             this.eventState.foul ? 'FOUL' : score,
             this.eventState.foul ? '' : event.unit,
             message,
+            timeUsed,
             null
         );
     },
