@@ -130,6 +130,7 @@ const UI = {
         if (screenId === 'screen-player-select') this.setupPlayerSelect();
         if (screenId === 'screen-event-select') this.setupEventSelect();
         if (screenId === 'screen-records') this.setupRecords();
+        if (screenId === 'screen-avatar') AvatarEditor.init();
     },
 
     setupPlayerSelect() {
@@ -308,6 +309,271 @@ const UI = {
     },
 };
 
+// ---- Avatar Renderer (draws the athlete with customization) ----
+const AvatarRenderer = {
+    getAvatar() {
+        const save = Save.load();
+        return save.avatar || { ...DEFAULT_AVATAR };
+    },
+
+    getOption(category, id) {
+        return AVATAR_OPTIONS[category].find(o => o.id === id) || AVATAR_OPTIONS[category][0];
+    },
+
+    // Draw a full avatar at (x, y) where y is the foot position, scale multiplier
+    draw(ctx, x, y, scale, frame, avatar) {
+        const av = avatar || this.getAvatar();
+        const s = scale || 1;
+        const skinColor = this.getOption('skinTone', av.skinTone).color;
+        const hairCol = this.getOption('hairColor', av.hairColor).color;
+        const shirtCol = this.getOption('shirtColor', av.shirtColor).color;
+        const shortsCol = this.getOption('shortsColor', av.shortsColor).color;
+        const shoesCol = this.getOption('shoesColor', av.shoesColor).color;
+        const accCol = this.getOption('accessoryColor', av.accessoryColor).color;
+
+        const f = frame || 0;
+        const legAnim = f ? Math.sin(f * 0.5) * 6 * s : 0;
+        const armAnim = f ? Math.sin(f * 0.5 + Math.PI) * 4 * s : 0;
+
+        // Cape (behind body)
+        if (av.accessory === 'cape') {
+            ctx.fillStyle = accCol;
+            const capeWave = f ? Math.sin(f * 0.3) * 3 * s : 0;
+            ctx.beginPath();
+            ctx.moveTo(x - 5 * s, y - 24 * s);
+            ctx.lineTo(x + 5 * s, y - 24 * s);
+            ctx.lineTo(x + 8 * s + capeWave, y - 2 * s);
+            ctx.lineTo(x - 8 * s + capeWave, y - 2 * s);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Shoes
+        ctx.fillStyle = shoesCol;
+        if (av.shoes === 'boots') {
+            ctx.fillRect(x - 5 * s, y - 4 * s + legAnim, 4 * s, 6 * s);
+            ctx.fillRect(x + 1 * s, y - 4 * s - legAnim, 4 * s, 6 * s);
+        } else if (av.shoes === 'cleats') {
+            ctx.fillRect(x - 5 * s, y - 2 * s + legAnim, 5 * s, 4 * s);
+            ctx.fillRect(x + 1 * s, y - 2 * s - legAnim, 5 * s, 4 * s);
+            // Cleats studs
+            ctx.fillStyle = '#999';
+            ctx.fillRect(x - 5 * s, y + 1 * s + legAnim, 5 * s, 1 * s);
+            ctx.fillRect(x + 1 * s, y + 1 * s - legAnim, 5 * s, 1 * s);
+        } else {
+            // Sneakers
+            ctx.fillRect(x - 5 * s, y - 2 * s + legAnim, 5 * s, 4 * s);
+            ctx.fillRect(x + 1 * s, y - 2 * s - legAnim, 5 * s, 4 * s);
+        }
+
+        // Legs
+        ctx.fillStyle = skinColor;
+        const legLen = av.shorts === 'long' ? 6 * s : 10 * s;
+        const legStart = av.shorts === 'long' ? y - 10 * s : y - 4 * s;
+        ctx.fillRect(x - 4 * s, legStart + legAnim, 3 * s, legLen);
+        ctx.fillRect(x + 1 * s, legStart - legAnim, 3 * s, legLen);
+
+        // Shorts
+        ctx.fillStyle = shortsCol;
+        const shortsH = av.shorts === 'long' ? 12 * s : 6 * s;
+        ctx.fillRect(x - 5 * s, y - 10 * s, 10 * s, shortsH);
+
+        // Body / shirt
+        ctx.fillStyle = shirtCol;
+        if (av.shirt === 'tank') {
+            ctx.fillRect(x - 4 * s, y - 24 * s, 8 * s, 14 * s);
+            // Shoulder straps
+            ctx.fillRect(x - 4 * s, y - 24 * s, 3 * s, 3 * s);
+            ctx.fillRect(x + 1 * s, y - 24 * s, 3 * s, 3 * s);
+        } else if (av.shirt === 'jersey') {
+            ctx.fillRect(x - 5 * s, y - 24 * s, 10 * s, 14 * s);
+            // Number "1"
+            ctx.fillStyle = '#FFF';
+            ctx.font = `bold ${8 * s}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.fillText('1', x, y - 14 * s);
+        } else if (av.shirt === 'hoodie') {
+            ctx.fillRect(x - 6 * s, y - 24 * s, 12 * s, 15 * s);
+            // Hood outline
+            ctx.strokeStyle = shirtCol === '#333333' ? '#555' : '#00000044';
+            ctx.lineWidth = 1 * s;
+            ctx.beginPath();
+            ctx.arc(x, y - 28 * s, 5 * s, Math.PI, Math.PI * 2);
+            ctx.stroke();
+        } else {
+            // T-shirt
+            ctx.fillRect(x - 5 * s, y - 24 * s, 10 * s, 14 * s);
+        }
+
+        // Arms
+        ctx.fillStyle = skinColor;
+        ctx.fillRect(x - 8 * s, y - 22 * s + armAnim, 3 * s, 10 * s);
+        ctx.fillRect(x + 5 * s, y - 22 * s - armAnim, 3 * s, 10 * s);
+
+        // Wristbands
+        if (av.accessory === 'wristband') {
+            ctx.fillStyle = accCol;
+            ctx.fillRect(x - 8 * s, y - 14 * s + armAnim, 3 * s, 3 * s);
+            ctx.fillRect(x + 5 * s, y - 14 * s - armAnim, 3 * s, 3 * s);
+        }
+
+        // Head
+        ctx.fillStyle = skinColor;
+        ctx.beginPath();
+        ctx.arc(x, y - 30 * s, 6 * s, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Hair
+        if (av.hair !== 'bald') {
+            ctx.fillStyle = hairCol;
+            if (av.hair === 'short') {
+                ctx.beginPath();
+                ctx.arc(x, y - 33 * s, 6 * s, Math.PI, Math.PI * 2);
+                ctx.fill();
+            } else if (av.hair === 'spiky') {
+                for (let i = -2; i <= 2; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + i * 3 * s, y - 34 * s);
+                    ctx.lineTo(x + i * 3 * s - 2 * s, y - 30 * s);
+                    ctx.lineTo(x + i * 3 * s + 2 * s, y - 30 * s);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            } else if (av.hair === 'long') {
+                ctx.beginPath();
+                ctx.arc(x, y - 33 * s, 6 * s, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(x - 6 * s, y - 33 * s, 3 * s, 12 * s);
+                ctx.fillRect(x + 3 * s, y - 33 * s, 3 * s, 12 * s);
+            } else if (av.hair === 'mohawk') {
+                ctx.fillRect(x - 2 * s, y - 40 * s, 4 * s, 10 * s);
+            } else if (av.hair === 'afro') {
+                ctx.beginPath();
+                ctx.arc(x, y - 33 * s, 9 * s, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Headband
+        if (av.accessory === 'headband') {
+            ctx.fillStyle = accCol;
+            ctx.fillRect(x - 7 * s, y - 32 * s, 14 * s, 2 * s);
+        }
+
+        // Sunglasses
+        if (av.accessory === 'sunglasses') {
+            ctx.fillStyle = '#111';
+            ctx.fillRect(x - 5 * s, y - 31 * s, 4 * s, 2 * s);
+            ctx.fillRect(x + 1 * s, y - 31 * s, 4 * s, 2 * s);
+            ctx.fillRect(x - 1 * s, y - 31 * s, 2 * s, 1 * s);
+        }
+    },
+};
+
+// ---- Avatar Editor ----
+const AvatarEditor = {
+    current: null,
+
+    init() {
+        this.current = { ...DEFAULT_AVATAR, ...(Save.load().avatar || {}) };
+        this.buildUI();
+        this.renderPreview();
+    },
+
+    buildUI() {
+        const container = document.getElementById('avatar-options');
+        const categories = [
+            { key: 'skinTone',       label: 'SKIN TONE',    type: 'color' },
+            { key: 'hair',           label: 'HAIR STYLE',   type: 'text' },
+            { key: 'hairColor',      label: 'HAIR COLOR',   type: 'color' },
+            { key: 'shirt',          label: 'SHIRT',        type: 'text' },
+            { key: 'shirtColor',     label: 'SHIRT COLOR',  type: 'color' },
+            { key: 'shorts',         label: 'SHORTS',       type: 'text' },
+            { key: 'shortsColor',    label: 'SHORTS COLOR', type: 'color' },
+            { key: 'shoes',          label: 'SHOES',        type: 'text' },
+            { key: 'shoesColor',     label: 'SHOE COLOR',   type: 'color' },
+            { key: 'accessory',      label: 'ACCESSORY',    type: 'text' },
+            { key: 'accessoryColor', label: 'ACC. COLOR',   type: 'color' },
+        ];
+
+        container.innerHTML = categories.map(cat => {
+            const options = AVATAR_OPTIONS[cat.key];
+            const swatches = options.map(opt => {
+                const isActive = this.current[cat.key] === opt.id;
+                if (cat.type === 'color' && opt.color) {
+                    return `<div class="avatar-swatch ${isActive ? 'active' : ''}"
+                                data-cat="${cat.key}" data-id="${opt.id}"
+                                style="background:${opt.color}"
+                                title="${opt.name}"></div>`;
+                } else {
+                    return `<div class="avatar-text-btn ${isActive ? 'active' : ''}"
+                                data-cat="${cat.key}" data-id="${opt.id}">${opt.name}</div>`;
+                }
+            }).join('');
+
+            return `<div class="avatar-option-group">
+                <label>${cat.label}</label>
+                <div class="avatar-swatches">${swatches}</div>
+            </div>`;
+        }).join('');
+
+        // Click handlers
+        container.querySelectorAll('.avatar-swatch, .avatar-text-btn').forEach(el => {
+            el.addEventListener('click', () => {
+                const cat = el.dataset.cat;
+                const id = el.dataset.id;
+                this.current[cat] = id;
+                // Update active state in this group
+                const group = el.closest('.avatar-option-group');
+                group.querySelectorAll('.avatar-swatch, .avatar-text-btn').forEach(s => s.classList.remove('active'));
+                el.classList.add('active');
+                this.renderPreview();
+            });
+        });
+    },
+
+    renderPreview() {
+        const canvas = document.getElementById('avatar-canvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width;
+        const H = canvas.height;
+
+        ctx.clearRect(0, 0, W, H);
+
+        // Background gradient
+        const grad = ctx.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0, '#1A1A2E');
+        grad.addColorStop(1, '#16213E');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+
+        // Floor line
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(20, H - 40);
+        ctx.lineTo(W - 20, H - 40);
+        ctx.stroke();
+
+        // Draw large avatar
+        AvatarRenderer.draw(ctx, W / 2, H - 42, 3.5, 0, this.current);
+
+        // Label
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('PREVIEW', W / 2, 20);
+    },
+
+    save() {
+        const data = Save.load();
+        data.avatar = { ...this.current };
+        Save.save(data);
+        UI.showScreen('screen-title');
+    },
+};
+
 // ---- Scene Renderer ----
 const Scene = {
     canvas: null,
@@ -390,35 +656,7 @@ const Scene = {
     },
 
     drawAthlete(x, y, frame, countryColors) {
-        const ctx = this.ctx;
-        const colors = countryColors || [COLORS.shirt, COLORS.shorts];
-
-        // Head
-        ctx.fillStyle = COLORS.skin;
-        ctx.beginPath();
-        ctx.arc(x, y - 30, 6, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Body / shirt
-        ctx.fillStyle = colors[0] || COLORS.shirt;
-        ctx.fillRect(x - 5, y - 24, 10, 14);
-
-        // Shorts
-        ctx.fillStyle = colors[1] || COLORS.shorts;
-        ctx.fillRect(x - 5, y - 10, 10, 6);
-
-        // Legs (animated based on frame)
-        ctx.fillStyle = COLORS.skin;
-        const legOffset = frame ? Math.sin(frame * 0.5) * 6 : 0;
-        // Left leg
-        ctx.fillRect(x - 4, y - 4, 3, 10 + legOffset);
-        // Right leg
-        ctx.fillRect(x + 1, y - 4, 3, 10 - legOffset);
-
-        // Arms
-        const armOffset = frame ? Math.sin(frame * 0.5 + Math.PI) * 4 : 0;
-        ctx.fillRect(x - 8, y - 22 + armOffset, 3, 10);
-        ctx.fillRect(x + 5, y - 22 - armOffset, 3, 10);
+        AvatarRenderer.draw(this.ctx, x, y, 1, frame);
     },
 
     drawFinishLine(x, y, height) {
@@ -828,66 +1066,137 @@ EventRenderers.ladder = function(ctx, state) {
 
     // --- Draw athlete on ladder ---
     if (state.phase !== 'falling' || state.fallTimer < 0.5) {
+        const av = AvatarRenderer.getAvatar();
+        const skinColor = AvatarRenderer.getOption('skinTone', av.skinTone).color;
+        const shirtCol = AvatarRenderer.getOption('shirtColor', av.shirtColor).color;
+        const shortsCol = AvatarRenderer.getOption('shortsColor', av.shortsColor).color;
+        const shoesCol = AvatarRenderer.getOption('shoesColor', av.shoesColor).color;
+        const hairCol = AvatarRenderer.getOption('hairColor', av.hairColor).color;
+        const accCol = AvatarRenderer.getOption('accessoryColor', av.accessoryColor).color;
+
         const athleteRung = Math.min(state.rung, rungCount);
         const athleteY = -athleteRung * rungSpacing;
-        const climbBob = state.climbAnim * -4; // bob up when climbing
-
-        // Determine which side hands/feet are on based on last key
+        const climbBob = state.climbAnim * -4;
         const onLeft = state.lastKey === 'left';
 
-        // Feet on rungs
-        ctx.fillStyle = '#333';
+        // Cape (behind body)
+        if (av.accessory === 'cape') {
+            ctx.fillStyle = accCol;
+            const capeWave = Math.sin(state.frame * 0.15) * 3;
+            ctx.beginPath();
+            ctx.moveTo(-5, athleteY - rungSpacing * 0.6 + climbBob - 8);
+            ctx.lineTo(5, athleteY - rungSpacing * 0.6 + climbBob - 8);
+            ctx.lineTo(8 + capeWave, athleteY + 4 + climbBob);
+            ctx.lineTo(-8 + capeWave, athleteY + 4 + climbBob);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Feet / shoes on rungs
+        ctx.fillStyle = shoesCol;
         const footRung1 = athleteY;
         const footRung2 = athleteY + rungSpacing * 0.4;
         ctx.fillRect(onLeft ? -halfW + 4 : 2, footRung1 - 3 + climbBob, 12, 4);
         ctx.fillRect(onLeft ? 2 : -halfW + 4, footRung2 - 3 + climbBob, 12, 4);
 
         // Legs
-        ctx.strokeStyle = COLORS.skin;
+        ctx.strokeStyle = skinColor;
         ctx.lineWidth = 3;
-        // Left leg
         ctx.beginPath();
         ctx.moveTo(onLeft ? -halfW + 10 : 8, footRung1 - 1 + climbBob);
         ctx.lineTo(0, athleteY - rungSpacing * 0.6 + climbBob);
         ctx.stroke();
-        // Right leg
         ctx.beginPath();
         ctx.moveTo(onLeft ? 8 : -halfW + 10, footRung2 - 1 + climbBob);
         ctx.lineTo(0, athleteY - rungSpacing * 0.6 + climbBob);
         ctx.stroke();
 
-        // Body
+        // Shorts
         const bodyBottom = athleteY - rungSpacing * 0.6 + climbBob;
+        ctx.fillStyle = shortsCol;
+        ctx.fillRect(-6, bodyBottom - 4, 12, av.shorts === 'long' ? 8 : 5);
+
+        // Body / shirt
         const bodyTop = bodyBottom - 18;
-        ctx.fillStyle = COLORS.shirt;
-        ctx.fillRect(-6, bodyTop, 12, bodyBottom - bodyTop);
+        ctx.fillStyle = shirtCol;
+        ctx.fillRect(-6, bodyTop, 12, 14);
+        if (av.shirt === 'jersey') {
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 7px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('1', 0, bodyTop + 10);
+        }
 
         // Arms gripping rungs above
-        ctx.strokeStyle = COLORS.skin;
+        ctx.strokeStyle = skinColor;
         ctx.lineWidth = 3;
         const handRungY = athleteY - rungSpacing;
-        // Left arm
         ctx.beginPath();
         ctx.moveTo(-4, bodyTop + 3);
         ctx.lineTo(onLeft ? -halfW + 6 : halfW - 6, handRungY + climbBob);
         ctx.stroke();
-        // Right arm
         ctx.beginPath();
         ctx.moveTo(4, bodyTop + 3);
         ctx.lineTo(onLeft ? halfW - 6 : -halfW + 6, handRungY + climbBob);
         ctx.stroke();
 
+        // Wristbands
+        if (av.accessory === 'wristband') {
+            ctx.fillStyle = accCol;
+            ctx.fillRect(onLeft ? -halfW + 4 : halfW - 8, handRungY + climbBob - 2, 4, 3);
+            ctx.fillRect(onLeft ? halfW - 8 : -halfW + 4, handRungY + climbBob - 2, 4, 3);
+        }
+
         // Head
-        ctx.fillStyle = COLORS.skin;
+        ctx.fillStyle = skinColor;
         ctx.beginPath();
         ctx.arc(0, bodyTop - 7, 7, 0, Math.PI * 2);
         ctx.fill();
 
         // Hair
-        ctx.fillStyle = '#4A3728';
-        ctx.beginPath();
-        ctx.arc(0, bodyTop - 10, 6, Math.PI, Math.PI * 2);
-        ctx.fill();
+        if (av.hair !== 'bald') {
+            ctx.fillStyle = hairCol;
+            if (av.hair === 'short') {
+                ctx.beginPath();
+                ctx.arc(0, bodyTop - 10, 6, Math.PI, Math.PI * 2);
+                ctx.fill();
+            } else if (av.hair === 'spiky') {
+                for (let i = -2; i <= 2; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(i * 3, bodyTop - 14);
+                    ctx.lineTo(i * 3 - 2, bodyTop - 8);
+                    ctx.lineTo(i * 3 + 2, bodyTop - 8);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            } else if (av.hair === 'long') {
+                ctx.beginPath();
+                ctx.arc(0, bodyTop - 10, 6, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(-6, bodyTop - 10, 3, 10);
+                ctx.fillRect(3, bodyTop - 10, 3, 10);
+            } else if (av.hair === 'mohawk') {
+                ctx.fillRect(-2, bodyTop - 18, 4, 10);
+            } else if (av.hair === 'afro') {
+                ctx.beginPath();
+                ctx.arc(0, bodyTop - 10, 9, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Headband
+        if (av.accessory === 'headband') {
+            ctx.fillStyle = accCol;
+            ctx.fillRect(-7, bodyTop - 9, 14, 2);
+        }
+
+        // Sunglasses
+        if (av.accessory === 'sunglasses') {
+            ctx.fillStyle = '#111';
+            ctx.fillRect(-5, bodyTop - 8, 4, 2);
+            ctx.fillRect(1, bodyTop - 8, 4, 2);
+            ctx.fillRect(-1, bodyTop - 8, 2, 1);
+        }
     }
 
     ctx.restore(); // end ladder rotation
@@ -902,14 +1211,20 @@ EventRenderers.ladder = function(ctx, state) {
         ctx.translate(fallX, fallY);
         ctx.rotate(fallRot);
 
-        // Simple tumbling figure
-        ctx.fillStyle = COLORS.skin;
+        // Simple tumbling figure using avatar colors
+        const fav = AvatarRenderer.getAvatar();
+        const fSkin = AvatarRenderer.getOption('skinTone', fav.skinTone).color;
+        const fShirt = AvatarRenderer.getOption('shirtColor', fav.shirtColor).color;
+        const fShorts = AvatarRenderer.getOption('shortsColor', fav.shortsColor).color;
+        ctx.fillStyle = fSkin;
         ctx.beginPath();
         ctx.arc(0, -12, 6, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = COLORS.shirt;
+        ctx.fillStyle = fShirt;
         ctx.fillRect(-5, -6, 10, 14);
-        ctx.fillStyle = COLORS.skin;
+        ctx.fillStyle = fShorts;
+        ctx.fillRect(-5, 4, 10, 4);
+        ctx.fillStyle = fSkin;
         ctx.fillRect(-3, 8, 3, 8);
         ctx.fillRect(1, 8, 3, 8);
 
@@ -1232,6 +1547,7 @@ const Game = {
             this.eventResults[event.id].push({
                 playerIndex: i,
                 bestScore: event.lowerIsBetter ? Infinity : -Infinity,
+                totalScore: 0,
                 scores: [],
             });
         }
@@ -1323,29 +1639,34 @@ const Game = {
         // Record score
         const result = this.eventResults[event.id][this.currentPlayerIndex];
         result.scores.push(score);
+        result.totalScore += score;
         if (event.lowerIsBetter) {
             if (score < result.bestScore) result.bestScore = score;
         } else {
             if (score > result.bestScore) result.bestScore = score;
         }
 
-        // Check for world record
-        const isRecord = Save.updateRecord(event.id, score, player.name, event.lowerIsBetter);
+        // Check for world record (based on total across all attempts)
+        const isRecord = Save.updateRecord(event.id, result.totalScore, player.name, event.lowerIsBetter);
         const message = isRecord ? 'NEW RECORD!' :
             (this.eventState.foul ? 'FOUL!' : '');
 
         if (isRecord) SFX.play('fanfare');
 
-        const timeUsed = this.eventState.timer
-            ? 'Time: ' + this.eventState.timer.toFixed(1) + 's'
-            : '';
+        const attemptNum = result.scores.length;
+        const totalAttempts = event.attempts;
+        let detail = 'Time: ' + (this.eventState.timer ? this.eventState.timer.toFixed(1) + 's' : '0.0s');
+        if (totalAttempts > 1) {
+            detail += '  |  Total: ' + result.totalScore.toFixed(2) + ' ' + event.unit
+                + ' (' + attemptNum + '/' + totalAttempts + ')';
+        }
 
         UI.showResult(
             event.name,
             this.eventState.foul ? 'FOUL' : score,
             this.eventState.foul ? '' : event.unit,
             message,
-            timeUsed,
+            detail,
             null
         );
     },
@@ -1376,10 +1697,10 @@ const Game = {
         const event = this.selectedEvents[this.currentEventIndex];
         const results = this.eventResults[event.id];
 
-        // Sort by best score
+        // Sort by total score across all attempts
         const sorted = [...results].sort((a, b) => {
-            if (event.lowerIsBetter) return a.bestScore - b.bestScore;
-            return b.bestScore - a.bestScore;
+            if (event.lowerIsBetter) return a.totalScore - b.totalScore;
+            return b.totalScore - a.totalScore;
         });
 
         // Award points
@@ -1392,7 +1713,7 @@ const Game = {
 
         const standings = sorted.map(r => ({
             name: this.players[r.playerIndex].name,
-            score: r.bestScore === Infinity || r.bestScore === -Infinity ? 0 : r.bestScore,
+            score: r.totalScore,
             unit: event.unit,
             points: r.points,
         }));

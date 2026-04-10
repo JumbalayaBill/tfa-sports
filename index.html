@@ -18,6 +18,7 @@
             </div>
             <div class="title-menu">
                 <button class="btn btn-primary" onclick="UI.showScreen('screen-player-select')">START GAME</button>
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-avatar')">CUSTOMIZE</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-records')">RECORDS</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-how-to-play')">HOW TO PLAY</button>
             </div>
@@ -169,6 +170,25 @@
             </div>
             <div class="screen-footer">
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">BACK</button>
+            </div>
+        </div>
+
+        <!-- AVATAR CUSTOMIZATION SCREEN -->
+        <div id="screen-avatar" class="screen">
+            <div class="screen-header">
+                <h2>CUSTOMIZE ATHLETE</h2>
+            </div>
+            <div class="avatar-editor">
+                <div class="avatar-preview-col">
+                    <canvas id="avatar-canvas" width="200" height="320"></canvas>
+                </div>
+                <div class="avatar-options-col" id="avatar-options">
+                    <!-- Filled dynamically -->
+                </div>
+            </div>
+            <div class="screen-footer">
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">BACK</button>
+                <button class="btn btn-primary" onclick="AvatarEditor.save()">SAVE</button>
             </div>
         </div>
 

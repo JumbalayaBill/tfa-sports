@@ -740,6 +740,125 @@ body {
     line-height: 1.6;
 }
 
+/* --- Avatar Editor --- */
+.avatar-editor {
+    display: flex;
+    gap: 24px;
+    width: 100%;
+    max-width: 700px;
+    align-items: flex-start;
+}
+
+.avatar-preview-col {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+#avatar-canvas {
+    background: var(--bg-card);
+    border: var(--border-retro);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+.avatar-options-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 6px;
+}
+
+.avatar-option-group {
+    background: var(--bg-card);
+    border: 1px solid #333;
+    padding: 10px 12px;
+}
+
+.avatar-option-group label {
+    display: block;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+}
+
+.avatar-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.avatar-swatch {
+    width: 28px;
+    height: 28px;
+    border: 2px solid #555;
+    cursor: pointer;
+    transition: border-color 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: var(--text-primary);
+    font-family: var(--font-main);
+    background: var(--bg-secondary);
+}
+
+.avatar-swatch:hover {
+    border-color: var(--accent);
+}
+
+.avatar-swatch.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
+}
+
+.avatar-swatch[data-color] {
+    border-radius: 0;
+}
+
+.avatar-text-btn {
+    padding: 4px 10px;
+    height: 28px;
+    width: auto;
+    font-family: var(--font-main);
+    font-size: 10px;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 2px solid #555;
+    cursor: pointer;
+    transition: border-color 0.1s;
+    white-space: nowrap;
+}
+
+.avatar-text-btn:hover {
+    border-color: var(--accent);
+}
+
+.avatar-text-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
+}
+
+@media (max-width: 600px) {
+    .avatar-editor {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .avatar-options-col {
+        max-height: 300px;
+        width: 100%;
+    }
+}
+
 /* --- Scrollbar (retro) --- */
 ::-webkit-scrollbar {
     width: 8px;

@@ -33,7 +33,7 @@ const EVENTS = [
             { keys: 'LEFT / RIGHT', desc: 'Alternate to climb up' },
             { keys: 'Balance', desc: 'Keep alternating evenly - uneven presses tilt the ladder!' },
         ],
-        worldRecord: 10.00,
+        worldRecord: 30.00,
         totalRungs: 20,
         ladderHeight: 10.0,  // meters
     },
@@ -74,18 +74,107 @@ const COLORS = {
     hudText:        '#FFFFFF',
 };
 
-// --- Athlete sprite frame data (simplified pixel art) ---
-const ATHLETE = {
-    width: 24,
-    height: 40,
-    // Frame definitions will be used by the renderer
-    // Each event may define its own animation frames
+// --- Avatar customization options ---
+const AVATAR_OPTIONS = {
+    skinTone: [
+        { id: 'light',    name: 'Light',    color: '#F5D0B0' },
+        { id: 'medium',   name: 'Medium',   color: '#E8B89D' },
+        { id: 'tan',      name: 'Tan',      color: '#C4956A' },
+        { id: 'brown',    name: 'Brown',    color: '#8D5E3C' },
+        { id: 'dark',     name: 'Dark',     color: '#5C3A1E' },
+    ],
+    hair: [
+        { id: 'short',    name: 'Short',    color: null },
+        { id: 'spiky',    name: 'Spiky',    color: null },
+        { id: 'long',     name: 'Long',     color: null },
+        { id: 'mohawk',   name: 'Mohawk',   color: null },
+        { id: 'bald',     name: 'Bald',     color: null },
+        { id: 'afro',     name: 'Afro',     color: null },
+    ],
+    hairColor: [
+        { id: 'black',    name: 'Black',    color: '#1A1A1A' },
+        { id: 'brown',    name: 'Brown',    color: '#4A3728' },
+        { id: 'blonde',   name: 'Blonde',   color: '#D4A843' },
+        { id: 'red',      name: 'Red',      color: '#A63D20' },
+        { id: 'white',    name: 'White',    color: '#E0DDD5' },
+        { id: 'blue',     name: 'Blue',     color: '#2979FF' },
+        { id: 'pink',     name: 'Pink',     color: '#E91E90' },
+    ],
+    shirt: [
+        { id: 'tshirt',   name: 'T-Shirt',  color: null },
+        { id: 'tank',     name: 'Tank Top',  color: null },
+        { id: 'jersey',   name: 'Jersey',    color: null },
+        { id: 'hoodie',   name: 'Hoodie',    color: null },
+    ],
+    shirtColor: [
+        { id: 'red',      name: 'Red',      color: '#E53935' },
+        { id: 'blue',     name: 'Blue',     color: '#1E88E5' },
+        { id: 'green',    name: 'Green',    color: '#43A047' },
+        { id: 'yellow',   name: 'Yellow',   color: '#FDD835' },
+        { id: 'white',    name: 'White',    color: '#F5F5F5' },
+        { id: 'black',    name: 'Black',    color: '#333333' },
+        { id: 'orange',   name: 'Orange',   color: '#F4511E' },
+        { id: 'purple',   name: 'Purple',   color: '#7B1FA2' },
+    ],
+    shorts: [
+        { id: 'short',    name: 'Short',    color: null },
+        { id: 'long',     name: 'Long',     color: null },
+    ],
+    shortsColor: [
+        { id: 'blue',     name: 'Blue',     color: '#1565C0' },
+        { id: 'black',    name: 'Black',    color: '#222222' },
+        { id: 'white',    name: 'White',    color: '#EEEEEE' },
+        { id: 'red',      name: 'Red',      color: '#C62828' },
+        { id: 'green',    name: 'Green',    color: '#2E7D32' },
+    ],
+    shoes: [
+        { id: 'sneakers', name: 'Sneakers', color: null },
+        { id: 'boots',    name: 'Boots',    color: null },
+        { id: 'cleats',   name: 'Cleats',   color: null },
+    ],
+    shoesColor: [
+        { id: 'white',    name: 'White',    color: '#F5F5F5' },
+        { id: 'black',    name: 'Black',    color: '#222222' },
+        { id: 'red',      name: 'Red',      color: '#E53935' },
+        { id: 'blue',     name: 'Blue',     color: '#1565C0' },
+        { id: 'gold',     name: 'Gold',     color: '#FFD700' },
+    ],
+    accessory: [
+        { id: 'none',       name: 'None',       color: null },
+        { id: 'headband',   name: 'Headband',   color: null },
+        { id: 'sunglasses', name: 'Sunglasses', color: null },
+        { id: 'wristband',  name: 'Wristbands', color: null },
+        { id: 'cape',       name: 'Cape',       color: null },
+    ],
+    accessoryColor: [
+        { id: 'red',      name: 'Red',      color: '#E53935' },
+        { id: 'blue',     name: 'Blue',     color: '#1E88E5' },
+        { id: 'gold',     name: 'Gold',     color: '#FFD700' },
+        { id: 'white',    name: 'White',    color: '#F5F5F5' },
+        { id: 'black',    name: 'Black',    color: '#333333' },
+        { id: 'green',    name: 'Green',    color: '#43A047' },
+    ],
+};
+
+const DEFAULT_AVATAR = {
+    skinTone: 'medium',
+    hair: 'short',
+    hairColor: 'brown',
+    shirt: 'tshirt',
+    shirtColor: 'red',
+    shorts: 'short',
+    shortsColor: 'blue',
+    shoes: 'sneakers',
+    shoesColor: 'white',
+    accessory: 'none',
+    accessoryColor: 'red',
 };
 
 // --- Default save data ---
 const DEFAULT_SAVE = {
     records: {},    // eventId -> { score, playerName, date }
     gamesPlayed: 0,
+    avatar: null,   // will use DEFAULT_AVATAR if null
 };
 
 // --- Sound definitions (Web Audio API synthesis) ---
