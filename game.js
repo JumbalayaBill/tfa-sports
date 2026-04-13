@@ -220,6 +220,8 @@ const UI = {
         const icons = {
             ladder:   '<div class="pixel-icon">&#128508;</div>',
             boot:     '<div class="pixel-icon">&#129406;</div>',
+            rockSkip: '<div class="pixel-icon">&#127754;</div>',
+            soccer:   '<div class="pixel-icon">&#9917;</div>',
         };
         return icons[icon] || '<div class="pixel-icon">?</div>';
     },
@@ -312,11 +314,11 @@ const UI = {
     showStandings(eventName, standings) {
         document.getElementById('standings-event-name').textContent = eventName + ' - STANDINGS';
         const table = document.getElementById('standings-table');
-        table.innerHTML = standings.map((s, i) => {
-            const medalClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+        table.innerHTML = standings.map((s) => {
+            const medalClass = s.rank === 0 ? 'gold' : s.rank === 1 ? 'silver' : s.rank === 2 ? 'bronze' : '';
             return `
                 <div class="standings-row ${medalClass}">
-                    <span class="standings-rank">${i + 1}</span>
+                    <span class="standings-rank">${s.rank + 1}</span>
                     <span class="standings-name">${s.name}</span>
                     <span class="standings-score">${s.score.toFixed(2)} ${s.unit}</span>
                     <span class="standings-points">+${s.points} pts</span>
@@ -2168,6 +2170,1726 @@ EventRenderers.boot = function(ctx, state) {
     }
 };
 
+// ============================================================
+//  ROCK SKIPPING - Event Implementation
+// ============================================================
+
+const ROCK_SKIP = {
+    // Angle phase (narrower range + faster needle = precision challenge)
+    angleMin: 5,                // degrees (flat throw)
+    angleMax: 35,               // degrees (steep throw)
+    optimalAngle: 10,           // best angle for skipping
+    anglePenaltyRate: 0.030,    // efficiency loss per degree from optimal
+    angleNeedleSpeed: 0.90,     // base oscillation speed (fast)
+    angleNeedleAccel: 0.15,     // speed increase per second
+    optimalZoneHalfWidth: 0.05, // normalized half-width of green zone (tight target)
+    // Power phase (oscillating — release at peak for max power)
+    powerChargeRate: 1.30,      // how fast the meter sweeps up/down
+    maxEnergy: 100,
+    // Flight
+    throwAnimDuration: 0.25,
+    firstFlightDuration: 0.7,
+    // Skipping physics
+    distancePerEnergy: 0.12,    // meters per energy unit per skip
+    energyRetentionGood: 0.74,
+    energyRetentionPerfect: 0.84,
+    minSkipEnergy: 3,
+    // Timing - rebalanced for visual/logic alignment
+    ringAnimDuration: 1.5,      // seconds for outer ring to shrink (constant)
+    ringAnimShrinkRate: 0.93,   // ring duration shrinks per skip (gentler)
+    baseTimingWindow: 0.65,     // seconds (very forgiving first skip)
+    windowShrinkRate: 0.88,     // timing window shrinks per skip
+    perfectZoneRatio: 0.35,
+    // Visual ring sizes - sweet spot crosses sweet ring at sweetProgress
+    outerRingMax: 45,           // starting outer ring radius
+    sweetRingR: 16,             // sweet spot ring radius
+    sweetProgress: 0.64,        // = 1 - sweetRingR/outerRingMax (visual perfect moment)
+    // Timing multipliers
+    perfectDistanceMult: 1.25,
+    goodDistanceMult: 1.0,
+    // Waves
+    waveAmplitude: 0.05,
+    waveFrequency: 2.8,
+    waveVisualHeight: 4,
+    // Visual
+    shoreX: 80,
+    waterY: 350,
+    cameraScrollSpeed: 200,
+    metersToPixels: 30,
+};
+
+EventLogic.rockSkip = {
+    init(state) {
+        state.phase = 'ready';
+        state.timer = 0;
+        state.frame = 0;
+        state.score = 0;
+        // Angle
+        state.angleNeedle = 0;
+        state.angleNeedleDir = 1;
+        state.angleSpeed = ROCK_SKIP.angleNeedleSpeed;
+        state.angleLocked = 0;
+        // Power (oscillates between 0 and 1 while held)
+        state.power = 0;
+        state.powerDir = 1;      // +1 rising, -1 falling
+        state.powerCharging = false;
+        // Throw
+        state.throwAnim = 0;
+        // Flight
+        state.flightTime = 0;
+        state.flightTotal = ROCK_SKIP.firstFlightDuration;
+        // Stone
+        state.stoneX = 0;          // meters from shore
+        state.stoneY = 0;          // pixels above water (negative = above)
+        state.energy = 0;
+        state.angleEfficiency = 1.0;
+        state.stoneVisible = true;
+        state.stoneAngle = 0;
+        // Skipping
+        state.skipCount = 0;
+        state.totalDistance = 0;
+        state.currentSkipDist = 0;
+        state.skipContactX = 0;
+        state.nextContactX = 0;
+        // Timing ring
+        state.ringTimer = 0;
+        state.ringDuration = ROCK_SKIP.ringAnimDuration;
+        state.ringActive = false;
+        state.skipAttempted = false; // ensures one tap per ring (works whether held or tapped)
+        state.timingWindow = ROCK_SKIP.baseTimingWindow;
+        state.timingResult = null;
+        state.timingResultTimer = 0;
+        state.waveOffset = 0;
+        // Waves
+        state.attemptNum = Game.currentAttempt || 0;
+        state.wavePhase = 0;
+        // Camera
+        state.cameraX = 0;
+        state.targetCameraX = 0;
+        // Arc animation between skips
+        state.arcTime = 0;
+        state.arcDuration = 0;
+        state.arcStartX = 0;
+        state.arcEndX = 0;
+        state.arcing = false;
+        // Effects
+        state.splashes = [];
+        state.ripples = [];
+        state.particles = [];
+        state.floatingTexts = [];
+        state.sinkTimer = 0;
+    },
+
+    handleInput(state, code, type) {
+        if (code !== 'Space') return;
+
+        if (state.phase === 'ready' && type === 'down') {
+            state.phase = 'angle';
+        } else if (state.phase === 'angle' && type === 'down') {
+            state.angleLocked = ROCK_SKIP.angleMin + state.angleNeedle * (ROCK_SKIP.angleMax - ROCK_SKIP.angleMin);
+            state.phase = 'power';
+            SFX.play('tick');
+        } else if (state.phase === 'power') {
+            if (type === 'down') {
+                state.powerCharging = true;
+            } else if (type === 'up' && state.powerCharging) {
+                state.powerCharging = false;
+                // Compute energy
+                const angleOff = Math.abs(state.angleLocked - ROCK_SKIP.optimalAngle);
+                state.angleEfficiency = Math.max(0.2, 1.0 - angleOff * ROCK_SKIP.anglePenaltyRate);
+                state.energy = state.power * ROCK_SKIP.maxEnergy * state.angleEfficiency;
+                state.phase = 'throw';
+                state.throwAnim = ROCK_SKIP.throwAnimDuration;
+                SFX.play('woosh');
+            }
+        } else if (state.phase === 'skipping' && state.ringActive && !state.skipAttempted &&
+                   (type === 'down' || type === 'up')) {
+            // Accept either down or up as the skip-timing tap. This handles the case
+            // where the player is still holding SPACE from anticipation when the ring
+            // becomes active (no new 'down' event would fire). Gated by skipAttempted
+            // so a quick tap (down + up) only counts once.
+            state.skipAttempted = true;
+            // Check timing - sweet spot matches visual moment when outer ring crosses sweet ring
+            const progress = state.ringTimer / state.ringDuration; // 0->1 as ring shrinks
+            const sweetSpotCenter = ROCK_SKIP.sweetProgress + state.waveOffset;
+            const dist = Math.abs(progress - sweetSpotCenter);
+            const windowHalf = state.timingWindow / state.ringDuration / 2;
+            const perfectHalf = windowHalf * ROCK_SKIP.perfectZoneRatio;
+
+            if (dist <= perfectHalf) {
+                state.timingResult = 'perfect';
+                state.timingResultTimer = 0.8;
+                const skipDist = state.energy * ROCK_SKIP.distancePerEnergy * ROCK_SKIP.perfectDistanceMult;
+                state.currentSkipDist = skipDist;
+                state.totalDistance += skipDist;
+                state.energy *= ROCK_SKIP.energyRetentionPerfect;
+                state.skipCount++;
+                SFX.play('skipPerfect');
+            } else if (dist <= windowHalf) {
+                state.timingResult = 'good';
+                state.timingResultTimer = 0.8;
+                const skipDist = state.energy * ROCK_SKIP.distancePerEnergy * ROCK_SKIP.goodDistanceMult;
+                state.currentSkipDist = skipDist;
+                state.totalDistance += skipDist;
+                state.energy *= ROCK_SKIP.energyRetentionGood;
+                state.skipCount++;
+                SFX.play('skip');
+            } else {
+                state.timingResult = 'miss';
+                state.timingResultTimer = 0.8;
+                state.ringActive = false;
+                state.phase = 'sinking';
+                SFX.play('plop');
+                state.score = Math.round(state.totalDistance * 100) / 100;
+                return;
+            }
+
+            // Add splash effects
+            const contactPx = ROCK_SKIP.shoreX + state.stoneX * ROCK_SKIP.metersToPixels;
+            state.splashes.push({ x: contactPx, age: 0 });
+            state.ripples.push({ x: contactPx, age: 0, maxAge: 2.0 });
+            for (let j = 0; j < 5; j++) {
+                state.particles.push({
+                    x: contactPx + (Math.random() - 0.5) * 10,
+                    y: ROCK_SKIP.waterY,
+                    vx: (Math.random() - 0.5) * 60,
+                    vy: -Math.random() * 120 - 40,
+                    life: 0.5 + Math.random() * 0.3,
+                    age: 0,
+                });
+            }
+            state.floatingTexts.push({
+                text: state.timingResult === 'perfect' ? 'PERFECT!' : 'GOOD',
+                x: contactPx,
+                y: ROCK_SKIP.waterY - 30,
+                age: 0,
+                color: state.timingResult === 'perfect' ? '#FFD700' : '#FFFFFF',
+            });
+
+            state.ringActive = false;
+            // Check if enough energy for next skip
+            if (state.energy < ROCK_SKIP.minSkipEnergy) {
+                state.phase = 'sinking';
+                SFX.play('plop');
+                state.score = Math.round(state.totalDistance * 100) / 100;
+            } else {
+                // Start arc to next contact
+                state.arcStartX = state.stoneX;
+                state.arcEndX = state.stoneX + state.energy * ROCK_SKIP.distancePerEnergy;
+                state.arcTime = 0;
+                state.arcDuration = 0.35 + 0.1 * Math.max(0, 5 - state.skipCount);
+                state.arcing = true;
+            }
+        }
+    },
+
+    update(state, dt) {
+        state.timer += dt;
+        state.frame++;
+        state.wavePhase += dt * ROCK_SKIP.waveFrequency;
+
+        // Update effects
+        state.splashes = state.splashes.filter(s => { s.age += dt; return s.age < 0.4; });
+        state.ripples = state.ripples.filter(r => { r.age += dt; return r.age < r.maxAge; });
+        state.particles = state.particles.filter(p => {
+            p.age += dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 300 * dt; // gravity
+            return p.age < p.life;
+        });
+        state.floatingTexts = state.floatingTexts.filter(t => {
+            t.age += dt;
+            t.y -= 30 * dt;
+            return t.age < 1.0;
+        });
+        if (state.timingResultTimer > 0) state.timingResultTimer -= dt;
+
+        if (state.phase === 'angle') {
+            state.angleSpeed += ROCK_SKIP.angleNeedleAccel * dt;
+            state.angleNeedle += state.angleNeedleDir * state.angleSpeed * dt;
+            if (state.angleNeedle >= 1) { state.angleNeedle = 1; state.angleNeedleDir = -1; }
+            if (state.angleNeedle <= 0) { state.angleNeedle = 0; state.angleNeedleDir = 1; }
+        }
+
+        if (state.phase === 'power') {
+            if (state.powerCharging) {
+                state.power += state.powerDir * ROCK_SKIP.powerChargeRate * dt;
+                if (state.power >= 1) { state.power = 1; state.powerDir = -1; }
+                if (state.power <= 0) { state.power = 0; state.powerDir = 1; }
+                if (state.frame % 8 === 0) SFX.play('charge');
+            }
+        }
+
+        if (state.phase === 'throw') {
+            state.throwAnim -= dt;
+            if (state.throwAnim <= 0) {
+                state.phase = 'flight';
+                state.flightTime = 0;
+            }
+        }
+
+        if (state.phase === 'flight') {
+            state.flightTime += dt;
+            const t = Math.min(1, state.flightTime / state.flightTotal);
+            // Stone moves to first contact
+            const firstDist = state.energy * ROCK_SKIP.distancePerEnergy * 0.5;
+            state.stoneX = firstDist * t;
+            state.stoneY = -80 * 4 * t * (1 - t); // arc above water
+            state.stoneAngle += dt * 8;
+            // Camera follows
+            state.targetCameraX = Math.max(0, state.stoneX * ROCK_SKIP.metersToPixels - 300);
+            state.cameraX += (state.targetCameraX - state.cameraX) * 3 * dt;
+
+            if (t >= 1) {
+                // First contact with water
+                state.stoneY = 0;
+                state.skipContactX = state.stoneX;
+                // Add first splash
+                const contactPx = ROCK_SKIP.shoreX + state.stoneX * ROCK_SKIP.metersToPixels;
+                state.splashes.push({ x: contactPx, age: 0 });
+                state.ripples.push({ x: contactPx, age: 0, maxAge: 2.0 });
+                SFX.play('splash');
+                // Start skipping timing
+                state.phase = 'skipping';
+                state.ringActive = true;
+                state.skipAttempted = false;
+                state.ringTimer = 0;
+                state.ringDuration = ROCK_SKIP.ringAnimDuration;
+                state.timingWindow = ROCK_SKIP.baseTimingWindow;
+                state.waveOffset = state.attemptNum * ROCK_SKIP.waveAmplitude * Math.sin(state.wavePhase);
+            }
+        }
+
+        if (state.phase === 'skipping') {
+            // Wave offset
+            state.waveOffset = state.attemptNum * ROCK_SKIP.waveAmplitude *
+                Math.sin(state.wavePhase + state.skipCount * 1.7);
+
+            if (state.arcing) {
+                state.arcTime += dt;
+                const t = Math.min(1, state.arcTime / state.arcDuration);
+                state.stoneX = state.arcStartX + (state.arcEndX - state.arcStartX) * t;
+                state.stoneY = -50 * 4 * t * (1 - t); // bounce arc
+                state.stoneAngle += dt * 10;
+                // Camera follows
+                state.targetCameraX = Math.max(0, state.stoneX * ROCK_SKIP.metersToPixels - 300);
+                state.cameraX += (state.targetCameraX - state.cameraX) * 3 * dt;
+
+                if (t >= 1) {
+                    state.arcing = false;
+                    state.stoneY = 0;
+                    // New contact - start ring
+                    state.ringActive = true;
+                    state.skipAttempted = false;
+                    state.ringTimer = 0;
+                    state.ringDuration = ROCK_SKIP.ringAnimDuration *
+                        Math.pow(ROCK_SKIP.ringAnimShrinkRate, state.skipCount);
+                    state.timingWindow = ROCK_SKIP.baseTimingWindow *
+                        Math.pow(ROCK_SKIP.windowShrinkRate, state.skipCount);
+                    const contactPx = ROCK_SKIP.shoreX + state.stoneX * ROCK_SKIP.metersToPixels;
+                    state.splashes.push({ x: contactPx, age: 0 });
+                    SFX.play('splash');
+                }
+            }
+
+            if (state.ringActive) {
+                state.ringTimer += dt;
+                // Auto-miss if ring fully shrinks without a press
+                if (state.ringTimer >= state.ringDuration) {
+                    state.ringActive = false;
+                    state.timingResult = 'miss';
+                    state.timingResultTimer = 0.8;
+                    state.phase = 'sinking';
+                    SFX.play('plop');
+                    state.score = Math.round(state.totalDistance * 100) / 100;
+                }
+            }
+        }
+
+        if (state.phase === 'sinking') {
+            state.sinkTimer += dt;
+            state.stoneY += 30 * dt; // sink below water
+            if (state.sinkTimer >= 2.5) {
+                state.phase = 'done';
+            }
+        }
+    },
+};
+
+EventRenderers.rockSkip = function(ctx, state) {
+    const W = 900, H = 500;
+    const camX = state.cameraX;
+
+    // Sky gradient (late afternoon)
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, 220);
+    skyGrad.addColorStop(0, '#2C3E7B');
+    skyGrad.addColorStop(0.6, '#6A5ACD');
+    skyGrad.addColorStop(1, '#E8A87C');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, 220);
+
+    // Mountains (parallax: slow scroll)
+    const mtX = -camX * 0.15;
+    ctx.fillStyle = '#3D4F6F';
+    const peaks = [
+        [100, 130], [200, 100], [350, 120], [500, 90], [650, 110], [800, 130],
+        [950, 95], [1100, 115], [1250, 105],
+    ];
+    peaks.forEach(([px, py]) => {
+        const x = mtX + px;
+        ctx.beginPath();
+        ctx.moveTo(x - 70, 220);
+        ctx.lineTo(x, py);
+        ctx.lineTo(x + 70, 220);
+        ctx.fill();
+        // Snow cap
+        ctx.fillStyle = '#DCDCDC';
+        ctx.beginPath();
+        ctx.moveTo(x - 15, py + 20);
+        ctx.lineTo(x, py);
+        ctx.lineTo(x + 15, py + 20);
+        ctx.fill();
+        ctx.fillStyle = '#3D4F6F';
+    });
+
+    // Treeline (medium parallax)
+    const treeX = -camX * 0.3;
+    ctx.fillStyle = '#2E5E3E';
+    for (let i = 0; i < 30; i++) {
+        const tx = treeX + i * 50 + 10;
+        const th = 20 + (i * 7) % 15;
+        ctx.beginPath();
+        ctx.moveTo(tx - 12, 225);
+        ctx.lineTo(tx, 225 - th);
+        ctx.lineTo(tx + 12, 225);
+        ctx.fill();
+    }
+
+    // Lake
+    const lakeGrad = ctx.createLinearGradient(0, 220, 0, ROCK_SKIP.waterY + 50);
+    lakeGrad.addColorStop(0, '#1565C0');
+    lakeGrad.addColorStop(1, '#4FC3F7');
+    ctx.fillStyle = lakeGrad;
+    ctx.fillRect(0, 220, W, ROCK_SKIP.waterY + 50 - 220);
+
+    // Wave lines on water
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    const waveAmp = 2 + state.attemptNum * ROCK_SKIP.waveVisualHeight;
+    for (let wy = 240; wy < ROCK_SKIP.waterY + 40; wy += 20) {
+        ctx.beginPath();
+        for (let wx = 0; wx <= W; wx += 5) {
+            const worldWx = wx + camX;
+            const y = wy + Math.sin(worldWx * 0.02 + state.timer * 2 + wy * 0.1) * waveAmp;
+            if (wx === 0) ctx.moveTo(wx, y); else ctx.lineTo(wx, y);
+        }
+        ctx.stroke();
+    }
+
+    // Shore (scrolls with camera)
+    const shoreScreenX = ROCK_SKIP.shoreX - camX;
+    if (shoreScreenX > -200) {
+        const shoreGrad = ctx.createLinearGradient(0, ROCK_SKIP.waterY - 5, 0, H);
+        shoreGrad.addColorStop(0, '#8D6E63');
+        shoreGrad.addColorStop(1, '#5D4037');
+        ctx.fillStyle = shoreGrad;
+        ctx.beginPath();
+        ctx.moveTo(shoreScreenX - 80, ROCK_SKIP.waterY - 5);
+        ctx.lineTo(shoreScreenX + 40, ROCK_SKIP.waterY + 10);
+        ctx.lineTo(shoreScreenX + 40, H);
+        ctx.lineTo(shoreScreenX - 80, H);
+        ctx.fill();
+        // Pebbles
+        ctx.fillStyle = '#9E9E9E';
+        for (let i = 0; i < 12; i++) {
+            const px = shoreScreenX - 60 + (i * 37) % 90;
+            const py = ROCK_SKIP.waterY + 5 + (i * 13) % 40;
+            ctx.beginPath();
+            ctx.arc(px, py, 2 + (i % 3), 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // Athlete on shore
+    if (shoreScreenX > -100 && (state.phase === 'ready' || state.phase === 'angle' ||
+        state.phase === 'power' || state.phase === 'throw')) {
+        const athX = shoreScreenX - 20;
+        const athY = ROCK_SKIP.waterY - 5;
+        // Simple athlete figure
+        const lean = state.phase === 'throw' ? -0.3 : 0;
+        ctx.save();
+        ctx.translate(athX, athY);
+        ctx.rotate(lean);
+        // Body
+        ctx.fillStyle = '#E8B89D';
+        ctx.beginPath();
+        ctx.arc(0, -45, 10, 0, Math.PI * 2); // head
+        ctx.fill();
+        ctx.fillStyle = '#2196F3';
+        ctx.fillRect(-6, -35, 12, 20); // torso
+        ctx.fillStyle = '#1565C0';
+        ctx.fillRect(-6, -15, 5, 18); // left leg
+        ctx.fillRect(1, -15, 5, 18); // right leg
+        // Throwing arm
+        if (state.phase !== 'throw') {
+            ctx.fillStyle = '#E8B89D';
+            ctx.fillRect(6, -33, 14, 4); // extended arm with stone
+            // Stone in hand
+            ctx.fillStyle = '#616161';
+            ctx.beginPath();
+            ctx.ellipse(22, -31, 5, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+
+    // Stone in flight/skipping
+    if (state.stoneVisible && (state.phase === 'flight' || state.phase === 'skipping' || state.phase === 'sinking')) {
+        const sx = ROCK_SKIP.shoreX + state.stoneX * ROCK_SKIP.metersToPixels - camX;
+        const sy = ROCK_SKIP.waterY + state.stoneY;
+        if (state.phase !== 'sinking' || state.sinkTimer < 1.5) {
+            ctx.save();
+            ctx.translate(sx, sy);
+            ctx.rotate(state.stoneAngle);
+            ctx.fillStyle = '#616161';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 6, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#9E9E9E';
+            ctx.beginPath();
+            ctx.ellipse(-1, -1, 3, 1.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // Timing ring
+    if (state.ringActive && state.phase === 'skipping') {
+        const rx = ROCK_SKIP.shoreX + state.stoneX * ROCK_SKIP.metersToPixels - camX;
+        const ry = ROCK_SKIP.waterY;
+        const progress = state.ringTimer / state.ringDuration;
+        const outerR = Math.max(2, ROCK_SKIP.outerRingMax * (1 - progress));
+        const sweetR = ROCK_SKIP.sweetRingR;
+        const sweetCenterOffset = state.waveOffset * 40;
+
+        // Window math (matches handleInput logic)
+        const sweetCenter = ROCK_SKIP.sweetProgress + state.waveOffset;
+        const windowHalf = state.timingWindow / state.ringDuration / 2;
+        const distToSweet = Math.abs(progress - sweetCenter);
+        const inGood = distToSweet <= windowHalf;
+        const inPerfect = distToSweet <= windowHalf * ROCK_SKIP.perfectZoneRatio;
+
+        // Sweet spot ring (target - drawn first, behind outer ring)
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(rx + sweetCenterOffset, ry, sweetR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Perfect zone (inner glow)
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.25)';
+        ctx.beginPath();
+        ctx.arc(rx + sweetCenterOffset, ry, sweetR * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Outer shrinking ring (color changes when in window)
+        const ringColor = inPerfect ? '#4CAF50' : inGood ? '#FFEB3B' : '#FFFFFF';
+        ctx.strokeStyle = ringColor;
+        ctx.lineWidth = inGood ? 4 : 3;
+        ctx.beginPath();
+        ctx.arc(rx, ry, outerR, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    // Splash effects
+    state.splashes.forEach(s => {
+        const sx = s.x - camX;
+        const alpha = 1 - s.age / 0.4;
+        const r = 10 + s.age * 60;
+        ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx, ROCK_SKIP.waterY, r, -Math.PI, 0);
+        ctx.stroke();
+    });
+
+    // Ripples
+    state.ripples.forEach(r => {
+        const rx = r.x - camX;
+        const alpha = 0.4 * (1 - r.age / r.maxAge);
+        const rr = 8 + r.age * 25;
+        ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(rx, ROCK_SKIP.waterY + 2, rr, rr * 0.3, 0, 0, Math.PI * 2);
+        ctx.stroke();
+    });
+
+    // Water droplet particles
+    state.particles.forEach(p => {
+        const px = p.x - camX;
+        const alpha = 1 - p.age / p.life;
+        ctx.fillStyle = `rgba(200,230,255,${alpha})`;
+        ctx.beginPath();
+        ctx.arc(px, p.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Floating texts
+    state.floatingTexts.forEach(t => {
+        const tx = t.x - camX;
+        const alpha = 1 - t.age;
+        ctx.fillStyle = t.color.replace(')', `,${alpha})`).replace('rgb', 'rgba');
+        ctx.font = 'bold 16px monospace';
+        ctx.textAlign = 'center';
+        // Use simple alpha approach
+        ctx.globalAlpha = Math.max(0, alpha);
+        ctx.fillStyle = t.color;
+        ctx.fillText(t.text, tx, t.y);
+        ctx.globalAlpha = 1;
+    });
+
+    // Sinking animation
+    if (state.phase === 'sinking') {
+        const sx = ROCK_SKIP.shoreX + state.stoneX * ROCK_SKIP.metersToPixels - camX;
+        // Bubbles
+        if (state.sinkTimer < 1.5) {
+            for (let i = 0; i < 3; i++) {
+                const bubY = ROCK_SKIP.waterY - state.sinkTimer * 20 - i * 8;
+                const bubX = sx + Math.sin(state.timer * 5 + i * 2) * 5;
+                const alpha = Math.max(0, 1 - state.sinkTimer);
+                ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(bubX, bubY, 2 + i, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+    }
+
+    // Below water fill (covers anything drawn below waterline)
+    ctx.fillStyle = 'rgba(21, 101, 192, 0.5)';
+    ctx.fillRect(0, ROCK_SKIP.waterY + 5, W, H - ROCK_SKIP.waterY);
+
+    // HUD - Skip counter
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`SKIPS: ${state.skipCount}`, 20, 30);
+
+    // HUD - Distance
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(`${state.totalDistance.toFixed(1)} m`, W - 20, 30);
+
+    // Angle gauge
+    if (state.phase === 'angle') {
+        const gx = shoreScreenX + 30, gy = ROCK_SKIP.waterY - 60;
+        const arcR = 45;
+        // Arc from 3 o'clock (right=flat) to 12 o'clock (up=steep)
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(gx, gy, arcR, -Math.PI / 2, 0);
+        ctx.stroke();
+        // Highlight optimal-angle zone (green arc) - narrow sweet spot
+        const optPos = (ROCK_SKIP.optimalAngle - ROCK_SKIP.angleMin) /
+                       (ROCK_SKIP.angleMax - ROCK_SKIP.angleMin);
+        const optMin = Math.max(0, optPos - ROCK_SKIP.optimalZoneHalfWidth);
+        const optMax = Math.min(1, optPos + ROCK_SKIP.optimalZoneHalfWidth);
+        ctx.strokeStyle = '#4CAF50';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(gx, gy, arcR, -optMax * (Math.PI / 2), -optMin * (Math.PI / 2));
+        ctx.stroke();
+        // Needle: angleNeedle=0 -> 0 rad (right, flat throw); angleNeedle=1 -> -PI/2 (up, steep)
+        const needleAngle = -state.angleNeedle * (Math.PI / 2);
+        ctx.strokeStyle = '#FF5722';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(gx, gy);
+        ctx.lineTo(gx + Math.cos(needleAngle) * arcR, gy + Math.sin(needleAngle) * arcR);
+        ctx.stroke();
+        // Labels
+        ctx.fillStyle = '#AAA';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('FLAT', gx + arcR + 6, gy + 4);
+        ctx.textAlign = 'center';
+        ctx.fillText('STEEP', gx, gy - arcR - 6);
+        // Angle text
+        const displayAngle = Math.round(ROCK_SKIP.angleMin + state.angleNeedle * (ROCK_SKIP.angleMax - ROCK_SKIP.angleMin));
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(displayAngle + '°', gx, gy + 25);
+        ctx.fillText('TAP SPACE', gx, gy + 42);
+    }
+
+    // Power meter (oscillates — release at peak for max power)
+    if (state.phase === 'power') {
+        const px = 100, py = H - 50, pw = 200, ph = 20;
+        // Background
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px, py, pw, ph);
+        // Target zone near max (top 10%)
+        ctx.fillStyle = 'rgba(76, 175, 80, 0.35)';
+        ctx.fillRect(px + pw * 0.9, py, pw * 0.1, ph);
+        // Current power fill
+        ctx.fillStyle = state.power > 0.9 ? '#4CAF50' : state.power > 0.6 ? '#FFEB3B' : '#FF9800';
+        ctx.fillRect(px, py, pw * state.power, ph);
+        // Direction indicator arrow at the tip of fill
+        const tipX = px + pw * state.power;
+        ctx.fillStyle = '#FFF';
+        ctx.beginPath();
+        if (state.powerDir > 0) {
+            ctx.moveTo(tipX, py);
+            ctx.lineTo(tipX + 8, py + ph / 2);
+            ctx.lineTo(tipX, py + ph);
+        } else {
+            ctx.moveTo(tipX, py);
+            ctx.lineTo(tipX - 8, py + ph / 2);
+            ctx.lineTo(tipX, py + ph);
+        }
+        ctx.fill();
+        // Border
+        ctx.strokeStyle = '#FFF';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(px, py, pw, ph);
+        // Labels
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('RELEASE AT PEAK!', px + pw / 2, py - 8);
+        ctx.fillText(Math.round(state.power * 100) + '%', px + pw / 2, py + 15);
+    }
+
+    // Ready prompt
+    if (state.phase === 'ready') {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 24px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('PRESS SPACE TO START', W / 2, H / 2 - 20);
+        ctx.font = '14px monospace';
+        ctx.fillText('Skip stones across the lake!', W / 2, H / 2 + 10);
+    }
+
+    // Result display during sinking
+    if (state.phase === 'sinking' && state.sinkTimer > 0.5) {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(W / 2 - 130, H / 2 - 45, 260, 90);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 22px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${state.totalDistance.toFixed(2)} m`, W / 2, H / 2 - 10);
+        ctx.font = '16px monospace';
+        ctx.fillStyle = '#FFD700';
+        ctx.fillText(`${state.skipCount} skip${state.skipCount !== 1 ? 's' : ''}`, W / 2, H / 2 + 20);
+    }
+};
+
+// ============================================================
+//  SOCCER OVER HOUSE - Event Implementation
+// ============================================================
+
+const SOCCER = {
+    // House geometry (world pixels)
+    houseX: 700,
+    houseWidth: 280,
+    houseWallHeight: 160,
+    houseRoofHeight: 80,
+    groundY: 420,
+    worldWidth: 1800,
+    // Ball physics
+    maxLaunchSpeed: 900,      // pixels/sec - need enough power to clear taller houses
+    gravity: 500,
+    windFactor: 40,
+    maxWind: 3.0,
+    ballRadius: 8,
+    // Angle gauge - narrowed to the playable range (low angles can't clear, very high lands on house)
+    angleMin: 0.70,           // ~40 degrees (flat)
+    angleMax: 1.31,           // ~75 degrees (steep)
+    optimalAngle: 1.13,       // ~65 degrees (best clearance + catch-zone landing at full power)
+    angleNeedleSpeed: 1.0,
+    angleNeedleAccel: 0.15,
+    optimalZoneHalfWidth: 0.10, // normalized half-width of green zone
+    // Power
+    powerChargeRate: 0.55,
+    // Sprint
+    sprintAccel: 0.45,
+    sprintDamping: 0.94,
+    stumblePenalty: 0.3,
+    // Catching
+    catchMoveSpeed: 200,
+    catchFriction: 0.85,
+    catchRadiusPerfect: 15,
+    catchRadiusGood: 40,
+    catchRadiusDive: 70,
+    // Scoring
+    baseClearPoints: 50,
+    maxClearanceBonus: 20,
+    perfectCatchPoints: 50,
+    goodCatchPoints: 25,
+    diveCatchPoints: 10,
+    maxEarlyBonus: 30,
+    earlyBonusRate: 15,
+    windBonusRate: 3,
+    // Difficulty per attempt
+    houseHeightScale: [1.0, 1.2, 1.5],
+    windScale: [0.4, 0.7, 1.0],
+    angleSpeedScale: [1.0, 1.2, 1.5],
+    // Timing
+    kickAnimDuration: 0.3,
+    resultDisplayTime: 2.5,
+    // Athlete start position
+    athleteStartX: 250,
+    // Catch zone
+    catchZoneLeft: 1050,
+    catchZoneRight: 1650,
+};
+
+EventLogic.soccer = {
+    init(state) {
+        state.phase = 'ready';
+        state.timer = 0;
+        state.frame = 0;
+        state.score = 0;
+
+        const attempt = Game.currentAttempt || 0;
+        state.attemptIndex = attempt;
+        state.houseScale = SOCCER.houseHeightScale[attempt] || 1.0;
+
+        // Wind
+        state.wind = (Math.random() - 0.5) * 2 * SOCCER.maxWind * (SOCCER.windScale[attempt] || 1.0);
+        state.wind = Math.round(state.wind * 10) / 10;
+
+        // House geometry
+        state.houseWallH = SOCCER.houseWallHeight * state.houseScale;
+        state.houseRoofH = SOCCER.houseRoofHeight * state.houseScale;
+        state.houseTotalH = state.houseWallH + state.houseRoofH;
+        state.houseLeft = SOCCER.houseX - SOCCER.houseWidth / 2;
+        state.houseRight = SOCCER.houseX + SOCCER.houseWidth / 2;
+        state.roofPeakY = SOCCER.groundY - state.houseTotalH;
+
+        // Angle gauge
+        state.angleNeedle = SOCCER.angleMin;
+        state.angleNeedleDir = 1;
+        state.angleNeedleSpeed = SOCCER.angleNeedleSpeed * (SOCCER.angleSpeedScale[attempt] || 1.0);
+        state.angleLocked = false;
+        state.kickAngle = 0;
+
+        // Power
+        state.power = 0;
+        state.powerCharging = false;
+        state.kickPower = 0;
+
+        // Ball
+        state.ballX = SOCCER.athleteStartX;
+        state.ballY = SOCCER.groundY - 15;
+        state.ballVx = 0;
+        state.ballVy = 0;
+        state.ballTrail = [];
+        state.ballLanded = false;
+        state.ballHitHouse = false;
+        state.ballLandingX = 0;
+        state.ballAngle = 0;
+
+        // Kick anim
+        state.kickAnimTimer = 0;
+
+        // Sprint
+        state.runnerProgress = 0;
+        state.sprintSpeed = 0;
+        state.lastSprintKey = null;
+        state.lastSprintTime = 0;
+        state.stumbleTimer = 0;
+        state.runnerWorldX = SOCCER.athleteStartX;
+        state.arrivedEarly = false;
+        state.arrivalTime = 0;
+
+        // Catch
+        state.catchAthleteX = SOCCER.catchZoneLeft + 150;
+        state.catchVelocity = 0;
+        state.catchResult = null;
+
+        // Camera
+        state.cameraX = 0;
+        state.cameraTargetX = 0;
+
+        // Scoring
+        state.clearanceBonus = 0;
+        state.catchPoints = 0;
+        state.earlyBonus = 0;
+        state.windBonus = 0;
+
+        // Visual
+        state.particles = [];
+        state.shakeTimer = 0;
+        state.resultTimer = 0;
+        state.resultText = '';
+    },
+
+    handleInput(state, code, type) {
+        if (state.phase === 'ready' && code === 'Space' && type === 'down') {
+            state.phase = 'angleSet';
+            return;
+        }
+
+        if (state.phase === 'angleSet' && code === 'Space' && type === 'down') {
+            state.angleLocked = true;
+            state.kickAngle = state.angleNeedle;
+            state.phase = 'powerCharge';
+            SFX.play('tick');
+            return;
+        }
+
+        if (state.phase === 'powerCharge' && code === 'Space') {
+            if (type === 'down') {
+                state.powerCharging = true;
+            } else if (type === 'up' && state.powerCharging) {
+                state.powerCharging = false;
+                state.kickPower = state.power;
+                state.phase = 'kick';
+                state.kickAnimTimer = SOCCER.kickAnimDuration;
+                // Launch ball
+                state.ballVx = state.kickPower * SOCCER.maxLaunchSpeed * Math.cos(state.kickAngle);
+                state.ballVy = -state.kickPower * SOCCER.maxLaunchSpeed * Math.sin(state.kickAngle);
+                SFX.play('kick');
+            }
+            return;
+        }
+
+        if (state.phase === 'flight') {
+            // Sprint: alternate L/R
+            if ((code === 'ArrowLeft' || code === 'ArrowRight') && type === 'down') {
+                const key = code === 'ArrowLeft' ? 'left' : 'right';
+                const now = state.timer;
+                if (key === state.lastSprintKey) {
+                    // Same key = stumble
+                    state.sprintSpeed *= SOCCER.stumblePenalty;
+                    state.stumbleTimer = 0.2;
+                } else {
+                    const elapsed = now - state.lastSprintTime;
+                    const speedBoost = Math.max(0, 1 - elapsed / 0.3);
+                    state.sprintSpeed += SOCCER.sprintAccel * (0.3 + speedBoost * 0.7);
+                    if (state.frame % 3 === 0) SFX.play('sprint');
+                }
+                state.lastSprintKey = key;
+                state.lastSprintTime = now;
+            }
+            return;
+        }
+
+        if (state.phase === 'catch') {
+            if (code === 'ArrowLeft') {
+                if (type === 'down') state.catchVelocity = -SOCCER.catchMoveSpeed;
+                else if (type === 'up' && state.catchVelocity < 0) state.catchVelocity = 0;
+            }
+            if (code === 'ArrowRight') {
+                if (type === 'down') state.catchVelocity = SOCCER.catchMoveSpeed;
+                else if (type === 'up' && state.catchVelocity > 0) state.catchVelocity = 0;
+            }
+            return;
+        }
+    },
+
+    update(state, dt) {
+        state.timer += dt;
+        state.frame++;
+
+        // Update particles
+        state.particles = state.particles.filter(p => {
+            p.age += dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 300 * dt;
+            return p.age < p.life;
+        });
+        if (state.shakeTimer > 0) state.shakeTimer -= dt;
+        if (state.stumbleTimer > 0) state.stumbleTimer -= dt;
+
+        // Angle gauge oscillation
+        if (state.phase === 'angleSet') {
+            state.angleNeedle += state.angleNeedleDir * state.angleNeedleSpeed * dt;
+            state.angleNeedleSpeed += SOCCER.angleNeedleAccel * dt;
+            if (state.angleNeedle >= SOCCER.angleMax) {
+                state.angleNeedle = SOCCER.angleMax;
+                state.angleNeedleDir = -1;
+            }
+            if (state.angleNeedle <= SOCCER.angleMin) {
+                state.angleNeedle = SOCCER.angleMin;
+                state.angleNeedleDir = 1;
+            }
+        }
+
+        // Power charge
+        if (state.phase === 'powerCharge' && state.powerCharging) {
+            state.power = Math.min(1, state.power + SOCCER.powerChargeRate * dt);
+            if (state.frame % 8 === 0) SFX.play('charge');
+        }
+
+        // Kick animation
+        if (state.phase === 'kick') {
+            state.kickAnimTimer -= dt;
+            if (state.kickAnimTimer <= 0) {
+                state.phase = 'flight';
+            }
+        }
+
+        // Ball flight + sprint
+        if (state.phase === 'flight') {
+            // Ball physics
+            state.ballVy += SOCCER.gravity * dt;
+            state.ballX += state.ballVx * dt;
+            state.ballY += state.ballVy * dt;
+            state.ballVx += state.wind * SOCCER.windFactor * dt;
+            state.ballAngle += dt * 5;
+
+            // Ball trail
+            if (state.frame % 3 === 0) {
+                state.ballTrail.push({ x: state.ballX, y: state.ballY });
+                if (state.ballTrail.length > 15) state.ballTrail.shift();
+            }
+
+            // Check roof collision
+            if (state.ballX >= state.houseLeft && state.ballX <= state.houseRight) {
+                // Roof is a triangle: peak at center, slopes to edges
+                const houseCenter = SOCCER.houseX;
+                const halfW = SOCCER.houseWidth / 2;
+                const distFromCenter = Math.abs(state.ballX - houseCenter);
+                const roofYAtBall = SOCCER.groundY - state.houseWallH -
+                    state.houseRoofH * (1 - distFromCenter / halfW);
+                // Also check walls
+                const wallTop = SOCCER.groundY - state.houseWallH;
+
+                if (state.ballY >= roofYAtBall) {
+                    // Hit the roof or wall (any direction — ball can't pass through)
+                    state.ballHitHouse = true;
+                    state.phase = 'result';
+                    state.resultTimer = SOCCER.resultDisplayTime;
+                    state.resultText = 'BONK!';
+                    state.score = 0;
+                    state.shakeTimer = 0.4;
+                    SFX.play('roofBonk');
+                    // Bounce particles
+                    for (let i = 0; i < 8; i++) {
+                        state.particles.push({
+                            x: state.ballX, y: state.ballY,
+                            vx: (Math.random() - 0.5) * 150,
+                            vy: -Math.random() * 100 - 50,
+                            life: 0.6, age: 0,
+                            color: '#8B4513',
+                        });
+                    }
+                    return;
+                }
+            }
+
+            // Check ball landed on ground (past house)
+            if (state.ballY >= SOCCER.groundY && state.ballX > state.houseRight) {
+                state.ballLanded = true;
+                state.ballLandingX = state.ballX;
+                state.ballY = SOCCER.groundY;
+
+                // Calculate clearance bonus
+                const houseCenter = SOCCER.houseX;
+                const halfW = SOCCER.houseWidth / 2;
+                // Find min clearance over the roof
+                let minClearance = Infinity;
+                for (let cx = state.houseLeft; cx <= state.houseRight; cx += 10) {
+                    const distC = Math.abs(cx - houseCenter);
+                    const roofY = SOCCER.groundY - state.houseWallH -
+                        state.houseRoofH * (1 - distC / halfW);
+                    // Find ball Y at this X using parametric reconstruction
+                    // Approximate: use the peak height vs roof peak
+                    const t = (cx - SOCCER.athleteStartX) / (state.ballLandingX - SOCCER.athleteStartX);
+                    const ballYAtX = SOCCER.groundY - 15 +
+                        (state.ballVy / state.ballVx * (cx - SOCCER.athleteStartX)) +
+                        0.5 * SOCCER.gravity * Math.pow((cx - SOCCER.athleteStartX) / state.ballVx, 2);
+                    // Actually simpler: just store min clearance we computed during flight
+                }
+                // Simpler approach: compute clearance at roof peak
+                const peakX = houseCenter;
+                const tPeak = (peakX - SOCCER.athleteStartX) / (state.kickPower * SOCCER.maxLaunchSpeed * Math.cos(state.kickAngle));
+                const ballYAtPeak = (SOCCER.groundY - 15) +
+                    (-state.kickPower * SOCCER.maxLaunchSpeed * Math.sin(state.kickAngle)) * tPeak +
+                    0.5 * SOCCER.gravity * tPeak * tPeak;
+                const clearance = state.roofPeakY - ballYAtPeak; // positive = cleared above
+                state.clearanceBonus = Math.max(0, Math.round(SOCCER.maxClearanceBonus - Math.max(0, clearance - 5) * 2));
+
+                if (state.runnerProgress >= 1.0) {
+                    // Runner already there - go to catch
+                    state.phase = 'catch';
+                    state.arrivedEarly = true;
+                } else {
+                    // Ball landed before runner arrived - miss
+                    state.phase = 'result';
+                    state.resultTimer = SOCCER.resultDisplayTime;
+                    state.catchResult = 'miss';
+                    state.catchPoints = 0;
+                    state.windBonus = Math.round(Math.abs(state.wind) * SOCCER.windBonusRate);
+                    state.score = SOCCER.baseClearPoints + state.clearanceBonus + state.windBonus;
+                    state.resultText = 'TOO SLOW!';
+                    SFX.play('ballBounce');
+                }
+                return;
+            }
+
+            // Ball went off screen left or landed before house
+            if (state.ballY >= SOCCER.groundY && state.ballX <= state.houseRight) {
+                state.phase = 'result';
+                state.resultTimer = SOCCER.resultDisplayTime;
+                state.score = 0;
+                state.resultText = 'SHORT!';
+                SFX.play('miss');
+                return;
+            }
+
+            // Sprint physics
+            state.sprintSpeed *= Math.pow(SOCCER.sprintDamping, dt * 60);
+            state.runnerProgress = Math.min(1.0, state.runnerProgress + state.sprintSpeed * dt);
+
+            // Derive runner world position from progress
+            // Path: start at athleteStartX, end at catchZoneLeft + 150
+            if (state.runnerProgress < 0.4) {
+                // Running toward house
+                const t = state.runnerProgress / 0.4;
+                state.runnerWorldX = SOCCER.athleteStartX + t * (state.houseLeft - 30 - SOCCER.athleteStartX);
+            } else if (state.runnerProgress < 0.6) {
+                // Behind house (not visible)
+                const t = (state.runnerProgress - 0.4) / 0.2;
+                state.runnerWorldX = (state.houseLeft - 30) + t * (state.houseRight + 30 - (state.houseLeft - 30));
+            } else {
+                // Past house, heading to catch zone
+                const t = (state.runnerProgress - 0.6) / 0.4;
+                state.runnerWorldX = (state.houseRight + 30) + t * (SOCCER.catchZoneLeft + 150 - (state.houseRight + 30));
+            }
+
+            // If runner arrives at catch zone and ball hasn't landed
+            if (state.runnerProgress >= 1.0 && !state.ballLanded) {
+                state.phase = 'catch';
+                state.catchAthleteX = state.runnerWorldX;
+                state.arrivalTime = state.timer;
+            }
+
+            // Camera follows action
+            const focusX = Math.max(state.ballX, state.runnerWorldX);
+            state.cameraTargetX = Math.max(0, Math.min(focusX - 350, SOCCER.worldWidth - 900));
+            state.cameraX += (state.cameraTargetX - state.cameraX) * 3 * dt;
+        }
+
+        // Catch phase
+        if (state.phase === 'catch') {
+            // Move athlete
+            state.catchAthleteX += state.catchVelocity * dt;
+            state.catchAthleteX = Math.max(SOCCER.catchZoneLeft, Math.min(SOCCER.catchZoneRight, state.catchAthleteX));
+            state.catchVelocity *= SOCCER.catchFriction;
+
+            // Ball still in air
+            if (!state.ballLanded) {
+                state.ballVy += SOCCER.gravity * dt;
+                state.ballX += state.ballVx * dt;
+                state.ballY += state.ballVy * dt;
+                state.ballVx += state.wind * SOCCER.windFactor * dt;
+                state.ballAngle += dt * 5;
+
+                if (state.frame % 3 === 0) {
+                    state.ballTrail.push({ x: state.ballX, y: state.ballY });
+                    if (state.ballTrail.length > 15) state.ballTrail.shift();
+                }
+
+                // Ball lands
+                if (state.ballY >= SOCCER.groundY) {
+                    state.ballLanded = true;
+                    state.ballLandingX = state.ballX;
+                    state.ballY = SOCCER.groundY;
+
+                    // Evaluate catch
+                    const dist = Math.abs(state.ballLandingX - state.catchAthleteX);
+                    if (dist <= SOCCER.catchRadiusPerfect) {
+                        state.catchResult = 'perfect';
+                        state.catchPoints = SOCCER.perfectCatchPoints;
+                        SFX.play('catch');
+                    } else if (dist <= SOCCER.catchRadiusGood) {
+                        state.catchResult = 'good';
+                        state.catchPoints = SOCCER.goodCatchPoints;
+                        SFX.play('catch');
+                    } else if (dist <= SOCCER.catchRadiusDive) {
+                        state.catchResult = 'dive';
+                        state.catchPoints = SOCCER.diveCatchPoints;
+                        SFX.play('thunk');
+                    } else {
+                        state.catchResult = 'miss';
+                        state.catchPoints = 0;
+                        SFX.play('ballBounce');
+                    }
+
+                    // Compute clearance bonus (same as flight)
+                    const peakX = SOCCER.houseX;
+                    const tPeak = (peakX - SOCCER.athleteStartX) / (state.kickPower * SOCCER.maxLaunchSpeed * Math.cos(state.kickAngle));
+                    const ballYAtPeak = (SOCCER.groundY - 15) +
+                        (-state.kickPower * SOCCER.maxLaunchSpeed * Math.sin(state.kickAngle)) * tPeak +
+                        0.5 * SOCCER.gravity * tPeak * tPeak;
+                    const clearance = state.roofPeakY - ballYAtPeak;
+                    state.clearanceBonus = Math.max(0, Math.round(SOCCER.maxClearanceBonus - Math.max(0, clearance - 5) * 2));
+
+                    // Early arrival bonus
+                    const timeBeforeLanding = state.timer - state.arrivalTime;
+                    state.earlyBonus = Math.round(Math.max(0, (timeBeforeLanding > 0.5) ?
+                        Math.min(SOCCER.maxEarlyBonus, timeBeforeLanding * SOCCER.earlyBonusRate) : 0));
+                    state.windBonus = Math.round(Math.abs(state.wind) * SOCCER.windBonusRate);
+
+                    state.score = SOCCER.baseClearPoints + state.clearanceBonus +
+                        state.catchPoints + state.earlyBonus + state.windBonus;
+
+                    if (state.catchResult === 'perfect') {
+                        state.resultText = 'PERFECT CATCH!';
+                        for (let i = 0; i < 10; i++) {
+                            state.particles.push({
+                                x: state.catchAthleteX, y: SOCCER.groundY - 30,
+                                vx: (Math.random() - 0.5) * 100,
+                                vy: -Math.random() * 120 - 20,
+                                life: 0.8, age: 0,
+                                color: '#FFD700',
+                            });
+                        }
+                    } else if (state.catchResult === 'good') {
+                        state.resultText = 'NICE CATCH!';
+                    } else if (state.catchResult === 'dive') {
+                        state.resultText = 'DIVING CATCH!';
+                    } else {
+                        state.resultText = 'DROPPED!';
+                    }
+
+                    state.phase = 'result';
+                    state.resultTimer = SOCCER.resultDisplayTime;
+                }
+            }
+
+            // Camera in catch zone
+            state.cameraTargetX = Math.max(0, SOCCER.catchZoneLeft - 200);
+            state.cameraX += (state.cameraTargetX - state.cameraX) * 3 * dt;
+        }
+
+        // Result display
+        if (state.phase === 'result') {
+            state.resultTimer -= dt;
+            if (state.resultTimer <= 0) {
+                state.phase = 'done';
+            }
+        }
+    },
+};
+
+EventRenderers.soccer = function(ctx, state) {
+    const W = 900, H = 500;
+    const camX = state.cameraX;
+
+    // Screen shake
+    let shakeX = 0, shakeY = 0;
+    if (state.shakeTimer > 0) {
+        shakeX = (Math.random() - 0.5) * 8;
+        shakeY = (Math.random() - 0.5) * 8;
+    }
+
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    // Sky
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, 200);
+    skyGrad.addColorStop(0, '#4A90D9');
+    skyGrad.addColorStop(1, '#87CEEB');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, 200);
+
+    // Clouds
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    const cloudScroll = -camX * 0.05 + state.timer * 10;
+    [100, 350, 600, 850].forEach((cx, i) => {
+        const x = ((cx + cloudScroll) % 1100) - 100;
+        const y = 40 + i * 25;
+        ctx.beginPath();
+        ctx.arc(x, y, 20, 0, Math.PI * 2);
+        ctx.arc(x + 20, y - 8, 15, 0, Math.PI * 2);
+        ctx.arc(x + 35, y, 18, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Grass
+    ctx.fillStyle = '#4CAF50';
+    ctx.fillRect(0, SOCCER.groundY, W, H - SOCCER.groundY);
+    // Grass detail
+    ctx.fillStyle = '#43A047';
+    for (let gx = 0; gx < W; gx += 30) {
+        const worldGx = gx + camX;
+        if ((worldGx / 30 | 0) % 2 === 0) {
+            ctx.fillRect(gx, SOCCER.groundY, 30, H - SOCCER.groundY);
+        }
+    }
+
+    // World-space objects (house, fences, etc.)
+    ctx.save();
+    ctx.translate(-camX, 0);
+
+    // Left yard fence
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    for (let fx = 50; fx < state.houseLeft - 50; fx += 30) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(fx, SOCCER.groundY - 25, 3, 25);
+        if (fx + 30 < state.houseLeft - 50) {
+            ctx.fillRect(fx, SOCCER.groundY - 22, 30, 2);
+            ctx.fillRect(fx, SOCCER.groundY - 12, 30, 2);
+        }
+    }
+
+    // Right yard fence
+    for (let fx = state.houseRight + 80; fx < SOCCER.worldWidth - 50; fx += 30) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(fx, SOCCER.groundY - 25, 3, 25);
+        if (fx + 30 < SOCCER.worldWidth - 50) {
+            ctx.fillRect(fx, SOCCER.groundY - 22, 30, 2);
+            ctx.fillRect(fx, SOCCER.groundY - 12, 30, 2);
+        }
+    }
+
+    // Small trees
+    const treePositions = [120, state.houseRight + 120, state.houseRight + 400];
+    treePositions.forEach(tx => {
+        // Trunk
+        ctx.fillStyle = '#5D4037';
+        ctx.fillRect(tx - 4, SOCCER.groundY - 45, 8, 45);
+        // Canopy
+        ctx.fillStyle = '#2E7D32';
+        ctx.beginPath();
+        ctx.arc(tx, SOCCER.groundY - 55, 22, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#388E3C';
+        ctx.beginPath();
+        ctx.arc(tx + 8, SOCCER.groundY - 50, 16, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // ---- HOUSE ----
+    const hx = SOCCER.houseX;
+    const hw = SOCCER.houseWidth;
+    const wallTop = SOCCER.groundY - state.houseWallH;
+    const roofPeak = state.roofPeakY;
+
+    // Walls
+    ctx.fillStyle = '#CC3333';
+    ctx.fillRect(hx - hw / 2, wallTop, hw, state.houseWallH);
+
+    // Brick lines
+    ctx.strokeStyle = '#AA2222';
+    ctx.lineWidth = 1;
+    for (let by = wallTop + 12; by < SOCCER.groundY; by += 12) {
+        ctx.beginPath();
+        ctx.moveTo(hx - hw / 2, by);
+        ctx.lineTo(hx + hw / 2, by);
+        ctx.stroke();
+        const offset = ((by - wallTop) / 12 | 0) % 2 === 0 ? 0 : 20;
+        for (let bx = hx - hw / 2 + offset; bx < hx + hw / 2; bx += 40) {
+            ctx.beginPath();
+            ctx.moveTo(bx, by);
+            ctx.lineTo(bx, by - 12);
+            ctx.stroke();
+        }
+    }
+
+    // Roof
+    ctx.fillStyle = '#4A5568';
+    ctx.beginPath();
+    ctx.moveTo(hx - hw / 2 - 15, wallTop);
+    ctx.lineTo(hx, roofPeak);
+    ctx.lineTo(hx + hw / 2 + 15, wallTop);
+    ctx.fill();
+    // Roof shingle lines
+    ctx.strokeStyle = '#3D4852';
+    ctx.lineWidth = 1;
+    for (let ry = roofPeak + 10; ry < wallTop; ry += 10) {
+        const t = (ry - roofPeak) / (wallTop - roofPeak);
+        const lx = hx - (hw / 2 + 15) * t;
+        const rx = hx + (hw / 2 + 15) * t;
+        ctx.beginPath();
+        ctx.moveTo(lx, ry);
+        ctx.lineTo(rx, ry);
+        ctx.stroke();
+    }
+
+    // Chimney
+    ctx.fillStyle = '#8B0000';
+    ctx.fillRect(hx + hw / 4, roofPeak - 25, 20, 40);
+    ctx.fillStyle = '#666';
+    ctx.fillRect(hx + hw / 4 - 2, roofPeak - 28, 24, 5);
+
+    // Windows
+    const winY = wallTop + 20;
+    [-50, 50].forEach(offset => {
+        ctx.fillStyle = '#2C3E50';
+        ctx.fillRect(hx + offset - 18, winY, 36, 30);
+        // Warm glow
+        ctx.fillStyle = '#FFD54F';
+        ctx.fillRect(hx + offset - 15, winY + 3, 14, 12);
+        ctx.fillRect(hx + offset + 1, winY + 3, 14, 12);
+        ctx.fillRect(hx + offset - 15, winY + 17, 14, 10);
+        ctx.fillRect(hx + offset + 1, winY + 17, 14, 10);
+        // Frame
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(hx + offset - 18, winY, 36, 30);
+        ctx.beginPath();
+        ctx.moveTo(hx + offset, winY);
+        ctx.lineTo(hx + offset, winY + 30);
+        ctx.moveTo(hx + offset - 18, winY + 15);
+        ctx.lineTo(hx + offset + 18, winY + 15);
+        ctx.stroke();
+    });
+
+    // Door
+    ctx.fillStyle = '#5D3A1A';
+    ctx.fillRect(hx - 15, SOCCER.groundY - 50, 30, 50);
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.arc(hx + 8, SOCCER.groundY - 25, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Door frame
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(hx - 15, SOCCER.groundY - 50, 30, 50);
+
+    // Foundation bushes
+    ctx.fillStyle = '#2E7D32';
+    for (let bx = hx - hw / 2 + 10; bx < hx + hw / 2 - 10; bx += 25) {
+        ctx.beginPath();
+        ctx.arc(bx, SOCCER.groundY - 5, 10, Math.PI, 0);
+        ctx.fill();
+    }
+
+    // White trim at roofline
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(hx - hw / 2, wallTop);
+    ctx.lineTo(hx + hw / 2, wallTop);
+    ctx.stroke();
+
+    // ---- ATHLETE (during kick phases and visible sprint) ----
+    const drawAthlete = (ax, ay, running, kicking) => {
+        ctx.save();
+        ctx.translate(ax, ay);
+        // Head
+        ctx.fillStyle = '#E8B89D';
+        ctx.beginPath();
+        ctx.arc(0, -45, 10, 0, Math.PI * 2);
+        ctx.fill();
+        // Hair
+        ctx.fillStyle = '#4A3728';
+        ctx.beginPath();
+        ctx.arc(0, -50, 8, Math.PI, 0);
+        ctx.fill();
+        // Body
+        ctx.fillStyle = '#2196F3';
+        ctx.fillRect(-6, -35, 12, 20);
+        // Legs
+        if (kicking) {
+            ctx.fillStyle = '#1565C0';
+            ctx.fillRect(-6, -15, 5, 18);
+            // Kicking leg forward
+            ctx.save();
+            ctx.translate(1, -15);
+            ctx.rotate(-0.6);
+            ctx.fillRect(0, 0, 5, 18);
+            ctx.restore();
+        } else if (running) {
+            const legPhase = Math.sin(state.timer * 12);
+            ctx.fillStyle = '#1565C0';
+            ctx.save();
+            ctx.translate(-4, -15);
+            ctx.rotate(legPhase * 0.4);
+            ctx.fillRect(0, 0, 5, 18);
+            ctx.restore();
+            ctx.save();
+            ctx.translate(1, -15);
+            ctx.rotate(-legPhase * 0.4);
+            ctx.fillRect(0, 0, 5, 18);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = '#1565C0';
+            ctx.fillRect(-6, -15, 5, 18);
+            ctx.fillRect(1, -15, 5, 18);
+        }
+        // Arms
+        ctx.fillStyle = '#E8B89D';
+        if (running) {
+            const armPhase = Math.sin(state.timer * 12 + Math.PI);
+            ctx.save();
+            ctx.translate(-6, -33);
+            ctx.rotate(armPhase * 0.5);
+            ctx.fillRect(-2, 0, 4, 12);
+            ctx.restore();
+            ctx.save();
+            ctx.translate(6, -33);
+            ctx.rotate(-armPhase * 0.5);
+            ctx.fillRect(-2, 0, 4, 12);
+            ctx.restore();
+        } else {
+            ctx.fillRect(-8, -33, 4, 12);
+            ctx.fillRect(4, -33, 4, 12);
+        }
+        ctx.restore();
+    };
+
+    // Draw athlete based on phase
+    if (state.phase === 'ready' || state.phase === 'angleSet' || state.phase === 'powerCharge') {
+        drawAthlete(SOCCER.athleteStartX, SOCCER.groundY, false, false);
+    } else if (state.phase === 'kick') {
+        drawAthlete(SOCCER.athleteStartX, SOCCER.groundY, false, true);
+    } else if (state.phase === 'flight') {
+        // Runner visible when not behind house
+        const rp = state.runnerProgress;
+        if (rp < 0.35 || rp > 0.65) {
+            drawAthlete(state.runnerWorldX, SOCCER.groundY, true, false);
+        } else {
+            // Dust clouds above house
+            const dustX = SOCCER.houseX;
+            const dustY = roofPeak - 15;
+            for (let i = 0; i < 3; i++) {
+                const dx = dustX + Math.sin(state.timer * 6 + i * 2) * 20;
+                const dy = dustY - i * 5;
+                ctx.fillStyle = `rgba(180,180,180,${0.3 + Math.sin(state.timer * 4 + i) * 0.15})`;
+                ctx.beginPath();
+                ctx.arc(dx, dy, 5 + i * 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    } else if (state.phase === 'catch') {
+        drawAthlete(state.catchAthleteX, SOCCER.groundY, false, false);
+    } else if (state.phase === 'result' && !state.ballHitHouse) {
+        const ax = state.catchResult === 'miss' ? state.catchAthleteX : (state.ballLandingX || state.catchAthleteX);
+        drawAthlete(ax, SOCCER.groundY, false, false);
+    }
+
+    // Ball shadow on ground
+    if ((state.phase === 'flight' || state.phase === 'catch') && !state.ballLanded) {
+        const shadowAlpha = Math.max(0.1, Math.min(0.4, (SOCCER.groundY - state.ballY) / 300));
+        ctx.fillStyle = `rgba(0,0,0,${shadowAlpha})`;
+        ctx.beginPath();
+        ctx.ellipse(state.ballX, SOCCER.groundY + 2, 10, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Ball trail
+    state.ballTrail.forEach((pt, i) => {
+        const alpha = (i / state.ballTrail.length) * 0.3;
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Ball
+    if (state.phase !== 'ready' && state.phase !== 'angleSet' && state.phase !== 'powerCharge') {
+        ctx.save();
+        ctx.translate(state.ballX, state.ballY);
+        ctx.rotate(state.ballAngle);
+        // White ball
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(0, 0, SOCCER.ballRadius, 0, Math.PI * 2);
+        ctx.fill();
+        // Pentagon pattern
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        ctx.arc(0, 0, 3, 0, Math.PI * 2);
+        ctx.fill();
+        for (let a = 0; a < Math.PI * 2; a += Math.PI * 2 / 5) {
+            ctx.beginPath();
+            ctx.arc(Math.cos(a) * 5, Math.sin(a) * 5, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, SOCCER.ballRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Particles (sparkles, dust)
+    state.particles.forEach(p => {
+        const alpha = 1 - p.age / p.life;
+        ctx.fillStyle = p.color || '#FFD700';
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    ctx.restore(); // end world-space
+
+    // ---- HUD (screen-space) ----
+
+    // Wind indicator
+    if (state.phase !== 'ready') {
+        const windStr = Math.abs(state.wind).toFixed(1);
+        const windDir = state.wind > 0 ? '→' : state.wind < 0 ? '←' : '';
+        const windColor = Math.abs(state.wind) > 2 ? '#FF5722' : Math.abs(state.wind) > 1 ? '#FFEB3B' : '#FFFFFF';
+        ctx.fillStyle = windColor;
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(`WIND: ${windStr} m/s ${windDir}`, W - 20, 25);
+    }
+
+    // Angle gauge - arc from 3 o'clock (right=flat) to 12 o'clock (up=steep)
+    if (state.phase === 'angleSet') {
+        const gx = 150, gy = SOCCER.groundY - 100;
+        const arcR = 50;
+        const angleSpan = SOCCER.angleMax - SOCCER.angleMin;
+        // Map needle radians -> normalized 0-1 -> canvas angle 0 (right) to -PI/2 (up)
+        const t = (state.angleNeedle - SOCCER.angleMin) / angleSpan;
+        const needleCanvasAngle = -t * (Math.PI / 2);
+
+        // Base arc
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(gx, gy, arcR, -Math.PI / 2, 0);
+        ctx.stroke();
+        // Optimal zone (green arc) - around the optimal angle
+        const optT = (SOCCER.optimalAngle - SOCCER.angleMin) / angleSpan;
+        const optMin = Math.max(0, optT - SOCCER.optimalZoneHalfWidth);
+        const optMax = Math.min(1, optT + SOCCER.optimalZoneHalfWidth);
+        ctx.strokeStyle = '#4CAF50';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(gx, gy, arcR, -optMax * (Math.PI / 2), -optMin * (Math.PI / 2));
+        ctx.stroke();
+        // Needle
+        ctx.strokeStyle = '#FF5722';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(gx, gy);
+        ctx.lineTo(gx + Math.cos(needleCanvasAngle) * arcR,
+                   gy + Math.sin(needleCanvasAngle) * arcR);
+        ctx.stroke();
+        // Endpoint labels
+        ctx.fillStyle = '#AAA';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('FLAT', gx + arcR + 6, gy + 4);
+        ctx.textAlign = 'center';
+        ctx.fillText('STEEP', gx, gy - arcR - 6);
+        // Angle display
+        const degrees = Math.round(state.angleNeedle * 180 / Math.PI);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 16px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(degrees + '°', gx, gy + 25);
+        ctx.font = '12px monospace';
+        ctx.fillText('TAP SPACE', gx, gy + 42);
+    }
+
+    // Power meter
+    if (state.phase === 'powerCharge') {
+        const px = 100, py = H - 50, pw = 200, ph = 20;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(px, py, pw, ph);
+        const pColor = state.power > 0.8 ? '#FF5722' : state.power > 0.5 ? '#FFEB3B' : '#4CAF50';
+        ctx.fillStyle = pColor;
+        ctx.fillRect(px, py, pw * state.power, ph);
+        ctx.strokeStyle = '#FFF';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(px, py, pw, ph);
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('HOLD SPACE - RELEASE TO KICK', px + pw / 2, py - 8);
+        ctx.fillText(Math.round(state.power * 100) + '%', px + pw / 2, py + 15);
+    }
+
+    // Sprint progress bar
+    if (state.phase === 'flight') {
+        const barX = 150, barY = H - 30, barW = 600, barH = 16;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX, barY, barW, barH);
+        ctx.fillStyle = '#4CAF50';
+        ctx.fillRect(barX, barY, barW * state.runnerProgress, barH);
+        ctx.strokeStyle = '#FFF';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(barX, barY, barW, barH);
+        // Runner icon
+        ctx.fillStyle = '#FFF';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('SPRINT! L/R', barX, barY - 4);
+        // House marker
+        const houseMarker = barX + barW * 0.5;
+        ctx.fillStyle = '#CC3333';
+        ctx.fillRect(houseMarker - 5, barY - 2, 10, barH + 4);
+    }
+
+    // Catch positioning hint
+    if (state.phase === 'catch' && !state.ballLanded) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 16px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('← POSITION YOURSELF →', W / 2, H - 30);
+    }
+
+    // Ready prompt
+    if (state.phase === 'ready') {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 24px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('PRESS SPACE TO START', W / 2, H / 2 - 60);
+        ctx.font = '14px monospace';
+        ctx.fillText('Kick the ball over the house and catch it!', W / 2, H / 2 - 35);
+        // House height indicator
+        const heightLabel = state.houseScale > 1.2 ? 'TALL HOUSE!' : state.houseScale > 1 ? 'TALLER HOUSE' : '';
+        if (heightLabel) {
+            ctx.fillStyle = '#FF5722';
+            ctx.font = 'bold 16px monospace';
+            ctx.fillText(heightLabel, W / 2, H / 2 - 10);
+        }
+    }
+
+    // Result overlay
+    if (state.phase === 'result') {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(W / 2 - 160, H / 2 - 70, 320, 140);
+
+        ctx.textAlign = 'center';
+        // Result text
+        const textColor = state.score === 0 ? '#FF5722' :
+            state.catchResult === 'perfect' ? '#FFD700' : '#FFFFFF';
+        ctx.fillStyle = textColor;
+        ctx.font = 'bold 24px monospace';
+        ctx.fillText(state.resultText, W / 2, H / 2 - 35);
+
+        // Score
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 20px monospace';
+        ctx.fillText(`${state.score} pts`, W / 2, H / 2);
+
+        // Breakdown
+        if (state.score > 0) {
+            ctx.font = '12px monospace';
+            ctx.fillStyle = '#AAA';
+            let breakdownY = H / 2 + 20;
+            ctx.fillText(`Clear: ${SOCCER.baseClearPoints} + Roof: ${state.clearanceBonus} + Catch: ${state.catchPoints}`, W / 2, breakdownY);
+            breakdownY += 16;
+            if (state.earlyBonus > 0 || state.windBonus > 0) {
+                ctx.fillText(`Early: +${state.earlyBonus} | Wind: +${state.windBonus}`, W / 2, breakdownY);
+            }
+        }
+    }
+
+    ctx.restore(); // end shake transform
+};
+
 // ---- Input Handler ----
 const Input = {
     keys: {},
@@ -2229,6 +3951,14 @@ const Podium = {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const sorted = [...players].sort((a, b) => b.totalPoints - a.totalPoints);
+
+        // Compute tied ranks
+        const ranks = [];
+        for (let i = 0; i < sorted.length; i++) {
+            ranks[i] = (i > 0 && sorted[i].totalPoints === sorted[i - 1].totalPoints)
+                ? ranks[i - 1] : i;
+        }
+
         const cx = canvas.width / 2;
 
         // Draw sky
@@ -2239,29 +3969,32 @@ const Podium = {
         ctx.fillRect(0, 0, 900, 400);
 
         // Podium blocks
+        const podiumColors = [COLORS.gold, COLORS.silver, COLORS.bronze];
         const podiumData = [
-            { place: 1, x: cx, w: 100, h: 140, color: COLORS.gold },
-            { place: 2, x: cx - 130, w: 100, h: 100, color: COLORS.silver },
-            { place: 3, x: cx + 130, w: 100, h: 70, color: COLORS.bronze },
+            { x: cx, w: 100, h: 140 },
+            { x: cx - 130, w: 100, h: 100 },
+            { x: cx + 130, w: 100, h: 70 },
         ];
 
         podiumData.forEach((p, i) => {
             if (!sorted[i]) return;
+            const rank = ranks[i];
+            const color = podiumColors[rank] || COLORS.bronze;
             const baseY = 380;
             // Block
-            ctx.fillStyle = p.color;
+            ctx.fillStyle = color;
             ctx.fillRect(p.x - p.w / 2, baseY - p.h, p.w, p.h);
             // Place number
             ctx.fillStyle = '#000';
             ctx.font = 'bold 28px monospace';
             ctx.textAlign = 'center';
-            ctx.fillText(p.place, p.x, baseY - p.h / 2 + 10);
+            ctx.fillText(rank + 1, p.x, baseY - p.h / 2 + 10);
             // Player name
             ctx.fillStyle = '#FFF';
             ctx.font = 'bold 14px monospace';
             ctx.fillText(sorted[i].name, p.x, baseY - p.h - 50);
             // Points
-            ctx.fillStyle = p.color;
+            ctx.fillStyle = color;
             ctx.font = '12px monospace';
             ctx.fillText(sorted[i].totalPoints + ' pts', p.x, baseY - p.h - 35);
             // Simple athlete figure
@@ -2269,10 +4002,11 @@ const Podium = {
         });
 
         // Additional players below
+        const medalClasses = ['gold', 'silver', 'bronze'];
         const scoresEl = document.getElementById('podium-scores');
         scoresEl.innerHTML = sorted.map((p, i) => `
-            <div class="podium-score-row ${i < 3 ? ['gold','silver','bronze'][i] : ''}">
-                <span class="podium-rank">${i + 1}.</span>
+            <div class="podium-score-row ${medalClasses[ranks[i]] || ''}">
+                <span class="podium-rank">${ranks[i] + 1}.</span>
                 <span class="podium-name">${p.name}</span>
                 <span class="podium-pts">${p.totalPoints} pts</span>
             </div>
@@ -2504,12 +4238,17 @@ const Game = {
             return b.totalScore - a.totalScore;
         });
 
-        // Award points
+        // Award points (tied scores share the best medal for that rank)
         const pointKeys = ['gold', 'silver', 'bronze', 'fourth'];
+        let rank = 0;
         sorted.forEach((r, i) => {
-            const pts = MEDAL_POINTS[pointKeys[i]] || MEDAL_POINTS.other;
+            if (i === 0 || r.totalScore !== sorted[i - 1].totalScore) {
+                rank = i;
+            }
+            const pts = MEDAL_POINTS[pointKeys[rank]] || MEDAL_POINTS.other;
             this.players[r.playerIndex].totalPoints += pts;
             r.points = pts;
+            r.rank = rank;
         });
 
         const standings = sorted.map(r => ({
@@ -2517,6 +4256,7 @@ const Game = {
             score: r.totalScore,
             unit: event.unit,
             points: r.points,
+            rank: r.rank,
         }));
 
         if (this.playerCount > 1) {

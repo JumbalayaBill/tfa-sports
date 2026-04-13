@@ -52,6 +52,36 @@ const EVENTS = [
         ],
         worldRecord: 300,
     },
+    {
+        id: 'rockSkip',
+        name: 'Rock Skipping',
+        description: 'Skip a stone across the lake! Set your angle, power up your throw, then tap with perfect timing on each bounce!',
+        icon: 'rockSkip',
+        category: 'field',
+        attempts: 3,
+        unit: 'm',
+        lowerIsBetter: false,
+        controls: [
+            { keys: 'SPACE (tap)', desc: 'Set angle, then tap each bounce' },
+            { keys: 'SPACE (hold)', desc: 'Charge power, release to throw' },
+        ],
+        worldRecord: 85.00,
+    },
+    {
+        id: 'soccer',
+        name: 'Soccer Over House',
+        description: 'Kick a soccer ball over the house and sprint to the other side to catch it! Clear the roof, run fast, and make the catch!',
+        icon: 'soccer',
+        category: 'field',
+        attempts: 3,
+        unit: 'pts',
+        lowerIsBetter: false,
+        controls: [
+            { keys: 'SPACE', desc: 'Set kick angle and charge power' },
+            { keys: 'LEFT / RIGHT', desc: 'Sprint around house, then position for catch' },
+        ],
+        worldRecord: 400,
+    },
 ];
 
 // --- Medal point values ---
@@ -209,4 +239,16 @@ const SOUNDS = {
     thunk:      { type: 'noise', duration: 0.12, freq: 150, decay: 0.06, gain: 0.35 },
     miss:       { type: 'noise', duration: 0.25, freq: 100, decay: 0.15, gain: 0.2 },
     charge:     { type: 'sine', duration: 0.06, freqStart: 400, freqEnd: 500, gain: 0.1 },
+    // Rock Skipping sounds
+    skip:       { type: 'sine', duration: 0.08, freqStart: 1800, freqEnd: 2400, gain: 0.2 },
+    skipPerfect:{ type: 'sine', duration: 0.12, freqStart: 2200, freqEnd: 3000, gain: 0.25 },
+    plop:       { type: 'sine', duration: 0.35, freqStart: 300, freqEnd: 80, gain: 0.3 },
+    splash:     { type: 'noise', duration: 0.1, freq: 800, decay: 0.05, gain: 0.15 },
+    // Soccer Over House sounds
+    kick:       { type: 'noise', duration: 0.15, freq: 250, decay: 0.08, gain: 0.35 },
+    crowdGasp:  { type: 'noise', duration: 0.5, freq: 500, decay: 0.3, gain: 0.2 },
+    roofBonk:   { type: 'sine', duration: 0.25, freqStart: 300, freqEnd: 100, gain: 0.4 },
+    sprint:     { type: 'noise', duration: 0.04, freq: 800, decay: 0.02, gain: 0.08 },
+    catch:      { type: 'sine', duration: 0.3, freqStart: 600, freqEnd: 900, gain: 0.25 },
+    ballBounce: { type: 'sine', duration: 0.1, freqStart: 500, freqEnd: 300, gain: 0.15 },
 };
