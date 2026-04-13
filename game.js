@@ -2916,9 +2916,10 @@ const SOCCER = {
     optimalZoneHalfWidth: 0.10, // normalized half-width of green zone
     // Power
     powerChargeRate: 0.55,
-    // Sprint
-    sprintAccel: 0.45,
-    sprintDamping: 0.94,
+    // Sprint - gentle damping so you keep momentum if you pause to judge the ball
+    sprintAccel: 0.35,
+    sprintDamping: 0.990,     // ~55% retained per second (was 0.94 = brutal halt)
+    sprintMaxSpeed: 1.0,      // cap so furious mashing can't finish sprint in a flash
     stumblePenalty: 0.3,
     // Catching
     catchMoveSpeed: 200,
@@ -3081,17 +3082,8 @@ EventLogic.soccer = {
             return;
         }
 
-        if (state.phase === 'catch') {
-            if (code === 'ArrowLeft') {
-                if (type === 'down') state.catchVelocity = -SOCCER.catchMoveSpeed;
-                else if (type === 'up' && state.catchVelocity < 0) state.catchVelocity = 0;
-            }
-            if (code === 'ArrowRight') {
-                if (type === 'down') state.catchVelocity = SOCCER.catchMoveSpeed;
-                else if (type === 'up' && state.catchVelocity > 0) state.catchVelocity = 0;
-            }
-            return;
-        }
+        // Catch phase movement is handled in update() via Input.keys so that
+        // holding a key moves continuously (keydown fires only once).
     },
 
     update(state, dt) {
@@ -3248,6 +3240,7 @@ EventLogic.soccer = {
 
             // Sprint physics
             state.sprintSpeed *= Math.pow(SOCCER.sprintDamping, dt * 60);
+            state.sprintSpeed = Math.min(SOCCER.sprintMaxSpeed, state.sprintSpeed);
             state.runnerProgress = Math.min(1.0, state.runnerProgress + state.sprintSpeed * dt);
 
             // Derive runner world position from progress
@@ -3281,10 +3274,17 @@ EventLogic.soccer = {
 
         // Catch phase
         if (state.phase === 'catch') {
+            // Drive velocity from currently-held keys (holding moves continuously)
+            if (Input.keys['ArrowLeft']) {
+                state.catchVelocity = -SOCCER.catchMoveSpeed;
+            } else if (Input.keys['ArrowRight']) {
+                state.catchVelocity = SOCCER.catchMoveSpeed;
+            } else {
+                state.catchVelocity *= SOCCER.catchFriction; // quick stop when released
+            }
             // Move athlete
             state.catchAthleteX += state.catchVelocity * dt;
             state.catchAthleteX = Math.max(SOCCER.catchZoneLeft, Math.min(SOCCER.catchZoneRight, state.catchAthleteX));
-            state.catchVelocity *= SOCCER.catchFriction;
 
             // Ball still in air
             if (!state.ballLanded) {
@@ -3297,6 +3297,35 @@ EventLogic.soccer = {
                 if (state.frame % 3 === 0) {
                     state.ballTrail.push({ x: state.ballX, y: state.ballY });
                     if (state.ballTrail.length > 15) state.ballTrail.shift();
+                }
+
+                // Roof collision - also check during catch phase (runner may have arrived
+                // at catch zone before the ball reached the house)
+                if (state.ballX >= state.houseLeft && state.ballX <= state.houseRight) {
+                    const houseCenter = SOCCER.houseX;
+                    const halfW = SOCCER.houseWidth / 2;
+                    const distFromCenter = Math.abs(state.ballX - houseCenter);
+                    const roofYAtBall = SOCCER.groundY - state.houseWallH -
+                        state.houseRoofH * (1 - distFromCenter / halfW);
+                    if (state.ballY >= roofYAtBall) {
+                        state.ballHitHouse = true;
+                        state.phase = 'result';
+                        state.resultTimer = SOCCER.resultDisplayTime;
+                        state.resultText = 'BONK!';
+                        state.score = 0;
+                        state.shakeTimer = 0.4;
+                        SFX.play('roofBonk');
+                        for (let i = 0; i < 8; i++) {
+                            state.particles.push({
+                                x: state.ballX, y: state.ballY,
+                                vx: (Math.random() - 0.5) * 150,
+                                vy: -Math.random() * 100 - 50,
+                                life: 0.6, age: 0,
+                                color: '#8B4513',
+                            });
+                        }
+                        return;
+                    }
                 }
 
                 // Ball lands
