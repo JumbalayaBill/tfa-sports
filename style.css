@@ -925,6 +925,100 @@ body {
     display: none;
 }
 
+/* --- Global Leaderboard --- */
+.leaderboard-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+}
+
+.lb-tab {
+    font-size: 11px !important;
+    padding: 6px 12px !important;
+    letter-spacing: 1px;
+}
+
+.lb-tab.active {
+    background: var(--accent) !important;
+    color: #000 !important;
+    border-color: var(--accent) !important;
+}
+
+.leaderboard-status {
+    font-size: 12px;
+    color: #777;
+    text-align: center;
+    min-height: 18px;
+}
+
+.leaderboard-table {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.lb-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: var(--bg-card);
+    border: 1px solid #333;
+    font-size: 14px;
+}
+
+.lb-row.lb-gold   { border-color: var(--gold);   background: rgba(255,215,0,0.1); }
+.lb-row.lb-silver { border-color: var(--silver);  background: rgba(192,192,192,0.08); }
+.lb-row.lb-bronze { border-color: var(--bronze);  background: rgba(205,127,50,0.08); }
+
+.lb-rank {
+    color: var(--accent);
+    font-weight: bold;
+    min-width: 28px;
+    text-align: center;
+}
+
+.lb-name {
+    flex: 1;
+    text-align: left;
+    text-transform: uppercase;
+}
+
+.lb-score {
+    color: var(--text-bright);
+    font-weight: bold;
+    min-width: 80px;
+    text-align: right;
+}
+
+.lb-date {
+    color: #666;
+    font-size: 11px;
+    min-width: 80px;
+    text-align: right;
+}
+
+.lb-empty {
+    text-align: center;
+    color: #555;
+    padding: 30px;
+    font-size: 14px;
+    letter-spacing: 2px;
+}
+
+.leaderboard-offline {
+    text-align: center;
+    padding: 40px 20px;
+    color: #666;
+}
+
+.leaderboard-offline p {
+    margin-bottom: 8px;
+}
+
 /* --- How to Play --- */
 .how-to-play-content {
     max-width: 500px;

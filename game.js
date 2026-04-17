@@ -155,6 +155,7 @@ const UI = {
         if (screenId === 'screen-event-select') this.setupEventSelect();
         if (screenId === 'screen-practice-select') this.setupPracticeSelect();
         if (screenId === 'screen-records') this.setupRecords();
+        if (screenId === 'screen-leaderboard') Leaderboard.showLeaderboardScreen();
         if (screenId === 'screen-avatar') AvatarEditor.init();
     },
 
@@ -4530,6 +4531,13 @@ const Game = {
         if (newGrandRecord) SFX.play('fanfare');
         else SFX.play('medal');
 
+        // Submit to global leaderboard (fire-and-forget, non-blocking)
+        if (!this.practiceMode && this.playerCount === 1) {
+            Leaderboard.submitAllScores(
+                player.name, perEvent, combinedScore, this.selectedEvents.length
+            );
+        }
+
         UI.showFinalSummary({
             practiceMode: this.practiceMode,
             practiceEventId: this.practiceMode ? this.selectedEvents[0].id : null,
@@ -4551,8 +4559,250 @@ const Game = {
     },
 };
 
+// ============================================================
+//  GLOBAL LEADERBOARD (Supabase)
+// ============================================================
+// To enable global leaderboards:
+// 1. Create a free Supabase project at https://supabase.com
+// 2. Run leaderboard.sql in Dashboard > SQL Editor
+// 3. Set SUPABASE_URL and SUPABASE_ANON below (from Dashboard > Settings > API)
+// 4. Set HMAC_SALT to match the hmac_secret in your private_config table
+// The game works perfectly without Supabase configured.
+// ============================================================
+
+const Leaderboard = {
+    // --- Configuration ---
+    // The anon key is designed to be public (RLS protects the data).
+    // The HMAC salt is a deterrent against casual score forging.
+    // Fill these in after running leaderboard.sql in your Supabase project.
+    SUPABASE_URL:  'https://mfdqesulgrxtgrdadtic.supabase.co',   // e.g. 'https://xyzabc.supabase.co'
+    SUPABASE_ANON: 'sb_publishable_bGEPwlPmLaE-tAby_Sx3Hg_uXvaAC-c',   // anon/public key from Dashboard > Settings > API
+    HMAC_SALT:     'd5c34e811d93b21484ecfe0a3069a6db',
+
+    _client: null,
+    _ready: false,
+    _leaderboardData: null,
+
+    init() {
+        if (!this.SUPABASE_URL || !this.SUPABASE_ANON) {
+            this._ready = false;
+            return;
+        }
+        // supabase-js loaded via async defer — may not be available yet
+        if (typeof supabase === 'undefined' || !supabase.createClient) {
+            // Retry once after a short delay (CDN still loading)
+            setTimeout(() => this._tryInit(), 1500);
+            return;
+        }
+        this._tryInit();
+    },
+
+    _tryInit() {
+        if (this._ready) return;
+        if (typeof supabase === 'undefined' || !supabase.createClient) return;
+        if (!this.SUPABASE_URL || !this.SUPABASE_ANON) return;
+        try {
+            this._client = supabase.createClient(this.SUPABASE_URL, this.SUPABASE_ANON);
+            this._ready = true;
+        } catch (e) {
+            console.warn('Leaderboard: init failed', e);
+            this._ready = false;
+        }
+        // Show/hide the leaderboard button on the title screen
+        const btn = document.getElementById('btn-leaderboard');
+        if (btn) btn.style.display = this._ready ? '' : 'none';
+    },
+
+    isAvailable() {
+        // Lazy retry if CDN loaded after initial init
+        if (!this._ready && this.SUPABASE_URL && typeof supabase !== 'undefined') {
+            this._tryInit();
+        }
+        return this._ready && this._client !== null;
+    },
+
+    // --- HMAC (Web Crypto API) ---
+    async _computeHMAC(message) {
+        const enc = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+            'raw', enc.encode(this.HMAC_SALT),
+            { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+        );
+        const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+        return Array.from(new Uint8Array(sig))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+    },
+
+    _getClientId() {
+        let id = localStorage.getItem('tfa-client-id');
+        if (!id) {
+            id = 'c_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+            localStorage.setItem('tfa-client-id', id);
+        }
+        return id;
+    },
+
+    // --- Score Submission ---
+    async submitEventScore(playerName, eventId, totalScore) {
+        if (!this.isAvailable()) return { ok: false, error: 'offline' };
+        try {
+            const ts = Date.now();
+            const scoreStr = String(Number(totalScore));
+            const msg = `${playerName}:${eventId}:${scoreStr}:${ts}`;
+            const checksum = await this._computeHMAC(msg);
+            const { data, error } = await this._client.rpc('submit_score', {
+                p_player_name: playerName,
+                p_event_id:    eventId,
+                p_score:       totalScore,
+                p_timestamp:   ts,
+                p_checksum:    checksum,
+                p_client_id:   this._getClientId(),
+            });
+            if (error) return { ok: false, error: error.message };
+            return data || { ok: true };
+        } catch (e) {
+            console.warn('Leaderboard submit failed:', e);
+            return { ok: false, error: 'network' };
+        }
+    },
+
+    async submitGrandScore(playerName, combinedScore, eventCount) {
+        if (!this.isAvailable()) return { ok: false, error: 'offline' };
+        try {
+            const ts = Date.now();
+            const scoreStr = String(Number(combinedScore));
+            const msg = `${playerName}:grand:${scoreStr}:${ts}`;
+            const checksum = await this._computeHMAC(msg);
+            const { data, error } = await this._client.rpc('submit_score', {
+                p_player_name: playerName,
+                p_event_id:    'grand',
+                p_score:       combinedScore,
+                p_event_count: eventCount,
+                p_timestamp:   ts,
+                p_checksum:    checksum,
+                p_client_id:   this._getClientId(),
+            });
+            if (error) return { ok: false, error: error.message };
+            return data || { ok: true };
+        } catch (e) {
+            console.warn('Leaderboard grand submit failed:', e);
+            return { ok: false, error: 'network' };
+        }
+    },
+
+    async submitAllScores(playerName, perEvent, combinedScore, eventCount) {
+        if (!this.isAvailable()) return;
+        for (const e of perEvent) {
+            await this.submitEventScore(playerName, e.eventId, e.score);
+        }
+        await this.submitGrandScore(playerName, combinedScore, eventCount);
+    },
+
+    // --- Leaderboard Fetching ---
+    async fetchEventTop10(eventId) {
+        if (!this.isAvailable()) return [];
+        try {
+            const { data, error } = await this._client
+                .from('leaderboard')
+                .select('player_name, score, event_count, created_at')
+                .eq('event_id', eventId)
+                .order('score', { ascending: false })
+                .limit(10);
+            if (error) { console.warn('Leaderboard fetch error:', error); return []; }
+            return data || [];
+        } catch (e) {
+            console.warn('Leaderboard fetch failed:', e);
+            return [];
+        }
+    },
+
+    async fetchAllLeaderboards() {
+        const results = {};
+        for (const ev of EVENTS) {
+            results[ev.id] = await this.fetchEventTop10(ev.id);
+        }
+        results.grand = await this.fetchEventTop10('grand');
+        return results;
+    },
+
+    // --- UI Rendering ---
+    async showLeaderboardScreen() {
+        const statusEl = document.getElementById('leaderboard-status');
+        const tableEl  = document.getElementById('leaderboard-table');
+
+        if (!this.isAvailable()) {
+            tableEl.innerHTML = `
+                <div class="leaderboard-offline">
+                    <p style="font-size:28px">&#128274;</p>
+                    <p>GLOBAL LEADERBOARD NOT CONFIGURED</p>
+                    <p class="hint">Set SUPABASE_URL and SUPABASE_ANON in game.js to enable.</p>
+                </div>`;
+            statusEl.textContent = '';
+            UI.showScreen('screen-leaderboard');
+            return;
+        }
+
+        statusEl.textContent = 'LOADING...';
+        tableEl.innerHTML = '';
+        UI.showScreen('screen-leaderboard');
+
+        // Tab click handlers
+        document.querySelectorAll('.lb-tab').forEach(tab => {
+            tab.onclick = () => {
+                document.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                this._renderTab(tab.dataset.tab);
+            };
+        });
+
+        this._leaderboardData = await this.fetchAllLeaderboards();
+        statusEl.textContent = '';
+
+        const activeTab = document.querySelector('.lb-tab.active');
+        this._renderTab(activeTab ? activeTab.dataset.tab : 'grand');
+    },
+
+    _renderTab(eventId) {
+        const tableEl = document.getElementById('leaderboard-table');
+        const data = (this._leaderboardData && this._leaderboardData[eventId]) || [];
+
+        if (data.length === 0) {
+            tableEl.innerHTML = '<div class="lb-empty">NO SCORES YET - BE THE FIRST!</div>';
+            return;
+        }
+
+        const event = EVENTS.find(e => e.id === eventId);
+        const unit = event ? event.unit : 'pts';
+        const medals = ['lb-gold', 'lb-silver', 'lb-bronze'];
+
+        tableEl.innerHTML = data.map((row, i) => {
+            const cls = medals[i] || '';
+            const dateStr = row.created_at
+                ? new Date(row.created_at).toLocaleDateString()
+                : '';
+            const scoreDisplay = eventId === 'grand'
+                ? row.score + ' pts'
+                : Number(row.score).toFixed(2) + ' ' + unit;
+            return `
+                <div class="lb-row ${cls}">
+                    <span class="lb-rank">${i + 1}.</span>
+                    <span class="lb-name">${this._escapeHtml(row.player_name)}</span>
+                    <span class="lb-score">${scoreDisplay}</span>
+                    <span class="lb-date">${dateStr}</span>
+                </div>`;
+        }).join('');
+    },
+
+    _escapeHtml(str) {
+        const el = document.createElement('div');
+        el.textContent = str;
+        return el.innerHTML;
+    },
+};
+
 // ---- Initialize ----
 document.addEventListener('DOMContentLoaded', () => {
     Input.init();
     SFX.init();
+    Leaderboard.init();
 });

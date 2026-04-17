@@ -21,6 +21,7 @@
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-practice-select')">PRACTICE</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-avatar')">CUSTOMIZE</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-records')">RECORDS</button>
+                <button class="btn btn-secondary" id="btn-leaderboard" style="display:none" onclick="UI.showScreen('screen-leaderboard')">LEADERBOARD</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-how-to-play')">HOW TO PLAY</button>
             </div>
             <div class="title-footer">
@@ -189,6 +190,28 @@
             </div>
         </div>
 
+        <!-- GLOBAL LEADERBOARD SCREEN -->
+        <div id="screen-leaderboard" class="screen">
+            <div class="screen-header">
+                <h2>GLOBAL LEADERBOARD</h2>
+            </div>
+            <div class="leaderboard-tabs">
+                <button class="btn btn-small lb-tab active" data-tab="grand">GRAND</button>
+                <button class="btn btn-small lb-tab" data-tab="ladder">LADDER</button>
+                <button class="btn btn-small lb-tab" data-tab="boot">BOOT</button>
+                <button class="btn btn-small lb-tab" data-tab="rockSkip">ROCK SKIP</button>
+                <button class="btn btn-small lb-tab" data-tab="soccer">SOCCER</button>
+            </div>
+            <div id="leaderboard-status" class="leaderboard-status"></div>
+            <div id="leaderboard-table" class="leaderboard-table">
+                <!-- Filled dynamically -->
+            </div>
+            <div class="screen-footer">
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">BACK</button>
+                <button class="btn btn-secondary" onclick="Leaderboard.showLeaderboardScreen()">REFRESH</button>
+            </div>
+        </div>
+
         <!-- HOW TO PLAY SCREEN -->
         <div id="screen-how-to-play" class="screen">
             <div class="screen-header">
@@ -253,6 +276,8 @@
 
     </div>
 
+    <!-- Supabase JS Client (optional - game works without it) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" async defer></script>
     <script src="data.js"></script>
     <script src="game.js"></script>
 </body>
