@@ -3323,9 +3323,34 @@ EventLogic.soccer = {
                 state.clearanceBonus = Math.max(0, Math.round(SOCCER.maxClearanceBonus - Math.max(0, clearance - 5) * 2));
 
                 if (state.runnerProgress >= 1.0) {
-                    // Runner already there - go to catch
-                    state.phase = 'catch';
-                    state.arrivedEarly = true;
+                    // Runner already there — evaluate catch immediately
+                    state.catchAthleteX = state.runnerWorldX;
+                    const dist = Math.abs(state.ballLandingX - state.catchAthleteX);
+                    if (dist <= SOCCER.catchRadiusPerfect) {
+                        state.catchResult = 'perfect';
+                        state.catchPoints = SOCCER.perfectCatchPoints;
+                        SFX.play('catch');
+                    } else if (dist <= SOCCER.catchRadiusGood) {
+                        state.catchResult = 'good';
+                        state.catchPoints = SOCCER.goodCatchPoints;
+                        SFX.play('catch');
+                    } else if (dist <= SOCCER.catchRadiusDive) {
+                        state.catchResult = 'dive';
+                        state.catchPoints = SOCCER.diveCatchPoints;
+                        SFX.play('thunk');
+                    } else {
+                        state.catchResult = 'miss';
+                        state.catchPoints = 0;
+                        SFX.play('ballBounce');
+                    }
+                    state.windBonus = Math.round(Math.abs(state.wind) * SOCCER.windBonusRate);
+                    state.score = SOCCER.baseClearPoints + state.clearanceBonus +
+                        state.catchPoints + state.windBonus;
+                    state.resultText = state.catchResult === 'perfect' ? 'PERFECT CATCH!' :
+                        state.catchResult === 'good' ? 'NICE CATCH!' :
+                        state.catchResult === 'dive' ? 'DIVING CATCH!' : 'DROPPED!';
+                    state.phase = 'result';
+                    state.resultTimer = SOCCER.resultDisplayTime;
                 } else {
                     // Ball landed before runner arrived - miss
                     state.phase = 'result';
@@ -4642,6 +4667,11 @@ const Leaderboard = {
                     p_client_id:   this._getClientId(),
                 }),
             });
+            if (!res.ok) {
+                const text = await res.text();
+                console.warn('Leaderboard submit HTTP', res.status, text);
+                return { ok: false, error: `HTTP ${res.status}` };
+            }
             const data = await res.json();
             return data || { ok: true };
         } catch (e) {
@@ -4670,6 +4700,11 @@ const Leaderboard = {
                     p_client_id:   this._getClientId(),
                 }),
             });
+            if (!res.ok) {
+                const text = await res.text();
+                console.warn('Leaderboard grand submit HTTP', res.status, text);
+                return { ok: false, error: `HTTP ${res.status}` };
+            }
             const data = await res.json();
             return data || { ok: true };
         } catch (e) {
