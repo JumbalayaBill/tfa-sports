@@ -150,7 +150,7 @@ BEGIN
     END IF;
 
     v_message := p_player_name || ':' || p_event_id || ':' || p_score::TEXT || ':' || p_timestamp::TEXT;
-    v_expected := encode(hmac(v_message::bytea, v_secret::bytea, 'sha256'), 'hex');
+    v_expected := encode(hmac(v_message::bytea, v_secret::bytea, 'sha256'::text), 'hex');
 
     IF p_checksum <> v_expected THEN
         RETURN jsonb_build_object('ok', false, 'error', 'checksum mismatch');
