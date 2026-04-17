@@ -52,7 +52,7 @@ const EVENTS = [
             { keys: 'SPACE (hold)', desc: 'Charge power, release to throw' },
         ],
         worldRecord: 300,
-        maxScore: 500,        // ~170 pts/attempt with max spin + distance + seagull
+        maxScore: 400,        // ~135 pts/attempt with max spin + distance (seagull excluded — bonus can push above 100)
     },
     {
         id: 'rockSkip',

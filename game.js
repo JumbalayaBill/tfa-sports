@@ -4500,7 +4500,8 @@ const Game = {
             const result = this.eventResults[ev.id][0];
             const score = result.totalScore;
             const max = ev.maxScore || 1;
-            const eventPoints = Math.min(100, Math.round((score / max) * 100));
+            // No cap — lucky bonuses (e.g. seagull hit) can push above 100
+            const eventPoints = Math.round((score / max) * 100);
             return {
                 eventId: ev.id,
                 name: ev.name,
