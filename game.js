@@ -4730,13 +4730,11 @@ const Leaderboard = {
                     <p class="hint">Set SUPABASE_URL and SUPABASE_ANON in game.js to enable.</p>
                 </div>`;
             statusEl.textContent = '';
-            UI.showScreen('screen-leaderboard');
             return;
         }
 
         statusEl.textContent = 'LOADING...';
         tableEl.innerHTML = '';
-        UI.showScreen('screen-leaderboard');
 
         // Tab click handlers
         document.querySelectorAll('.lb-tab').forEach(tab => {
