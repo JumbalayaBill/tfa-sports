@@ -4602,7 +4602,13 @@ const Leaderboard = {
         if (typeof supabase === 'undefined' || !supabase.createClient) return;
         if (!this.SUPABASE_URL || !this.SUPABASE_ANON) return;
         try {
-            this._client = supabase.createClient(this.SUPABASE_URL, this.SUPABASE_ANON);
+            this._client = supabase.createClient(this.SUPABASE_URL, this.SUPABASE_ANON, {
+                auth: {
+                    autoRefreshToken: false,
+                    persistSession: false,
+                    detectSessionInUrl: false,
+                },
+            });
             this._ready = true;
         } catch (e) {
             console.warn('Leaderboard: init failed', e);
