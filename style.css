@@ -110,6 +110,16 @@ body {
     margin-top: 40px;
     font-size: 14px;
     color: var(--accent);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.version-tag {
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 2px;
 }
 
 /* --- Blink animation --- */

@@ -4574,60 +4574,34 @@ const Leaderboard = {
     // --- Configuration ---
     // The anon key is designed to be public (RLS protects the data).
     // The HMAC salt is a deterrent against casual score forging.
-    // Fill these in after running leaderboard.sql in your Supabase project.
-    SUPABASE_URL:  'https://mfdqesulgrxtgrdadtic.supabase.co',   // e.g. 'https://xyzabc.supabase.co'
-    SUPABASE_ANON: 'sb_publishable_bGEPwlPmLaE-tAby_Sx3Hg_uXvaAC-c',   // anon/public key from Dashboard > Settings > API
+    SUPABASE_URL:  'https://mfdqesulgrxtgrdadtic.supabase.co',
+    SUPABASE_ANON: 'sb_publishable_bGEPwlPmLaE-tAby_Sx3Hg_uXvaAC-c',
     HMAC_SALT:     'd5c34e811d93b21484ecfe0a3069a6db',
 
-    _client: null,
-    _ready: false,
     _leaderboardData: null,
 
     init() {
-        if (!this.SUPABASE_URL || !this.SUPABASE_ANON) {
-            this._ready = false;
-            return;
-        }
-        // supabase-js loaded via async defer — may not be available yet
-        if (typeof supabase === 'undefined' || !supabase.createClient) {
-            // Retry once after a short delay (CDN still loading)
-            setTimeout(() => this._tryInit(), 1500);
-            return;
-        }
-        this._tryInit();
-    },
-
-    _tryInit() {
-        if (this._ready) return;
-        if (typeof supabase === 'undefined' || !supabase.createClient) return;
-        if (!this.SUPABASE_URL || !this.SUPABASE_ANON) return;
-        try {
-            this._client = supabase.createClient(this.SUPABASE_URL, this.SUPABASE_ANON, {
-                auth: {
-                    autoRefreshToken: false,
-                    persistSession: false,
-                    detectSessionInUrl: false,
-                },
-            });
-            this._ready = true;
-        } catch (e) {
-            console.warn('Leaderboard: init failed', e);
-            this._ready = false;
-        }
-        // Show/hide the leaderboard button on the title screen
         const btn = document.getElementById('btn-leaderboard');
-        if (btn) btn.style.display = this._ready ? '' : 'none';
+        if (btn) btn.style.display = this.isAvailable() ? '' : 'none';
     },
 
     isAvailable() {
-        // Lazy retry if CDN loaded after initial init
-        if (!this._ready && this.SUPABASE_URL && typeof supabase !== 'undefined') {
-            this._tryInit();
-        }
-        return this._ready && this._client !== null;
+        return !!(this.SUPABASE_URL && this.SUPABASE_ANON);
     },
 
-    // --- HMAC (Web Crypto API) ---
+    // --- Plain fetch helpers (no supabase-js dependency) ---
+    _headers() {
+        return {
+            'apikey': this.SUPABASE_ANON,
+            'Content-Type': 'application/json',
+        };
+    },
+
+    _restUrl(path) {
+        return `${this.SUPABASE_URL}/rest/v1/${path}`;
+    },
+
+    // --- HMAC (Web Crypto API — native, no library) ---
     async _computeHMAC(message) {
         const enc = new TextEncoder();
         const key = await crypto.subtle.importKey(
@@ -4648,7 +4622,7 @@ const Leaderboard = {
         return id;
     },
 
-    // --- Score Submission ---
+    // --- Score Submission (POST to RPC endpoint) ---
     async submitEventScore(playerName, eventId, totalScore) {
         if (!this.isAvailable()) return { ok: false, error: 'offline' };
         try {
@@ -4656,15 +4630,19 @@ const Leaderboard = {
             const scoreStr = String(Number(totalScore));
             const msg = `${playerName}:${eventId}:${scoreStr}:${ts}`;
             const checksum = await this._computeHMAC(msg);
-            const { data, error } = await this._client.rpc('submit_score', {
-                p_player_name: playerName,
-                p_event_id:    eventId,
-                p_score:       totalScore,
-                p_timestamp:   ts,
-                p_checksum:    checksum,
-                p_client_id:   this._getClientId(),
+            const res = await fetch(this._restUrl('rpc/submit_score'), {
+                method: 'POST',
+                headers: this._headers(),
+                body: JSON.stringify({
+                    p_player_name: playerName,
+                    p_event_id:    eventId,
+                    p_score:       totalScore,
+                    p_timestamp:   ts,
+                    p_checksum:    checksum,
+                    p_client_id:   this._getClientId(),
+                }),
             });
-            if (error) return { ok: false, error: error.message };
+            const data = await res.json();
             return data || { ok: true };
         } catch (e) {
             console.warn('Leaderboard submit failed:', e);
@@ -4679,16 +4657,20 @@ const Leaderboard = {
             const scoreStr = String(Number(combinedScore));
             const msg = `${playerName}:grand:${scoreStr}:${ts}`;
             const checksum = await this._computeHMAC(msg);
-            const { data, error } = await this._client.rpc('submit_score', {
-                p_player_name: playerName,
-                p_event_id:    'grand',
-                p_score:       combinedScore,
-                p_event_count: eventCount,
-                p_timestamp:   ts,
-                p_checksum:    checksum,
-                p_client_id:   this._getClientId(),
+            const res = await fetch(this._restUrl('rpc/submit_score'), {
+                method: 'POST',
+                headers: this._headers(),
+                body: JSON.stringify({
+                    p_player_name: playerName,
+                    p_event_id:    'grand',
+                    p_score:       combinedScore,
+                    p_event_count: eventCount,
+                    p_timestamp:   ts,
+                    p_checksum:    checksum,
+                    p_client_id:   this._getClientId(),
+                }),
             });
-            if (error) return { ok: false, error: error.message };
+            const data = await res.json();
             return data || { ok: true };
         } catch (e) {
             console.warn('Leaderboard grand submit failed:', e);
@@ -4704,18 +4686,21 @@ const Leaderboard = {
         await this.submitGrandScore(playerName, combinedScore, eventCount);
     },
 
-    // --- Leaderboard Fetching ---
+    // --- Leaderboard Fetching (GET with query params) ---
     async fetchEventTop10(eventId) {
         if (!this.isAvailable()) return [];
         try {
-            const { data, error } = await this._client
-                .from('leaderboard')
-                .select('player_name, score, event_count, created_at')
-                .eq('event_id', eventId)
-                .order('score', { ascending: false })
-                .limit(10);
-            if (error) { console.warn('Leaderboard fetch error:', error); return []; }
-            return data || [];
+            const params = new URLSearchParams({
+                select: 'player_name,score,event_count,created_at',
+                event_id: `eq.${eventId}`,
+                order: 'score.desc',
+                limit: '10',
+            });
+            const res = await fetch(`${this._restUrl('leaderboard')}?${params}`, {
+                headers: this._headers(),
+            });
+            if (!res.ok) { console.warn('Leaderboard fetch error:', res.status); return []; }
+            return await res.json();
         } catch (e) {
             console.warn('Leaderboard fetch failed:', e);
             return [];
@@ -4724,10 +4709,11 @@ const Leaderboard = {
 
     async fetchAllLeaderboards() {
         const results = {};
-        for (const ev of EVENTS) {
-            results[ev.id] = await this.fetchEventTop10(ev.id);
-        }
-        results.grand = await this.fetchEventTop10('grand');
+        const eventIds = [...EVENTS.map(ev => ev.id), 'grand'];
+        // Fetch all in parallel instead of sequentially
+        const fetches = eventIds.map(id => this.fetchEventTop10(id));
+        const data = await Promise.all(fetches);
+        eventIds.forEach((id, i) => { results[id] = data[i]; });
         return results;
     },
 
