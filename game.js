@@ -44,6 +44,30 @@ const Save = {
         data.gamesPlayed = (data.gamesPlayed || 0) + 1;
         this.save(data);
     },
+
+    // Update the all-around "Grand Score" record. combinedScore is the sum of
+    // (event_score / world_record) * 100 over all events played in one game.
+    updateTotalRecord(combinedScore, eventCount, eventIds, playerName) {
+        const data = this.load();
+        const existing = data.totalRecord;
+        if (!existing || combinedScore > existing.combinedScore) {
+            data.totalRecord = {
+                combinedScore,
+                eventCount,
+                eventIds,
+                playerName,
+                date: new Date().toISOString().slice(0, 10),
+            };
+            this.save(data);
+            return true;
+        }
+        return false;
+    },
+
+    getTotalRecord() {
+        const data = this.load();
+        return data.totalRecord || null;
+    },
 };
 
 // ---- SFX Module (Web Audio API) ----
@@ -129,6 +153,7 @@ const UI = {
         // Trigger screen-specific setup
         if (screenId === 'screen-player-select') this.setupPlayerSelect();
         if (screenId === 'screen-event-select') this.setupEventSelect();
+        if (screenId === 'screen-practice-select') this.setupPracticeSelect();
         if (screenId === 'screen-records') this.setupRecords();
         if (screenId === 'screen-avatar') AvatarEditor.init();
     },
@@ -229,7 +254,7 @@ const UI = {
     setupRecords() {
         const list = document.getElementById('records-list');
         const saveData = Save.load();
-        list.innerHTML = EVENTS.map(ev => {
+        const eventRows = EVENTS.map(ev => {
             const rec = saveData.records ? saveData.records[ev.id] : null;
             return `
                 <div class="record-row">
@@ -240,6 +265,88 @@ const UI = {
                 </div>
             `;
         }).join('');
+        const grand = saveData.totalRecord;
+        const grandMax = grand ? grand.eventCount * 100 : '-';
+        const grandRow = `
+            <div class="record-row record-row-grand">
+                <span class="record-event">GRAND SCORE (${grand ? grand.eventCount : '-'} events)</span>
+                <span class="record-score">${grand ? grand.combinedScore + ' / ' + grandMax : '---'}</span>
+                <span class="record-player">${grand ? grand.playerName : ''}</span>
+                <span class="record-date">${grand ? grand.date : ''}</span>
+            </div>
+        `;
+        list.innerHTML = eventRows + grandRow;
+    },
+
+    setupPracticeSelect() {
+        const list = document.getElementById('practice-event-list');
+        list.innerHTML = EVENTS.map(ev => `
+            <div class="event-card practice-event-card" onclick="Game.startPractice('${ev.id}')">
+                <div class="event-card-icon">${this.getEventIcon(ev.icon)}</div>
+                <div class="event-card-info">
+                    <h3>${ev.name}</h3>
+                    <p>${ev.description}</p>
+                </div>
+                <div class="event-card-toggle">
+                    <span class="practice-arrow">▶</span>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    showFinalSummary({ practiceMode, practiceEventId, playerName, perEvent, combinedScore,
+                       maxPossible, newGrandRecord, previousGrandRecord }) {
+        document.getElementById('final-summary-title').textContent =
+            practiceMode ? 'PRACTICE COMPLETE' : 'FINAL RESULTS';
+
+        const list = document.getElementById('final-summary-list');
+        list.innerHTML = perEvent.map(e => `
+            <div class="final-summary-row">
+                <span class="final-summary-event">${e.name}</span>
+                <span class="final-summary-score">${e.score.toFixed(2)} ${e.unit}</span>
+                <span class="final-summary-pi">${e.eventPoints} / 100</span>
+            </div>
+        `).join('');
+
+        // Grand score box (hide in practice — single event doesn't need a "grand" total)
+        const grandBox = document.getElementById('final-summary-grand-box');
+        if (practiceMode) {
+            grandBox.classList.add('hidden');
+        } else {
+            grandBox.classList.remove('hidden');
+            document.getElementById('final-summary-grand-score').textContent =
+                `${combinedScore} / ${maxPossible}`;
+            const msgEl = document.getElementById('final-summary-grand-message');
+            if (newGrandRecord) {
+                const prev = previousGrandRecord
+                    ? `previous best ${previousGrandRecord.combinedScore}` : 'first record set';
+                msgEl.textContent = `NEW RECORD! (${prev})`;
+                msgEl.className = 'final-summary-grand-message new-record';
+            } else if (previousGrandRecord) {
+                msgEl.textContent = `Best: ${previousGrandRecord.combinedScore} / ${maxPossible} by ${previousGrandRecord.playerName}`;
+                msgEl.className = 'final-summary-grand-message';
+            } else {
+                msgEl.textContent = '';
+                msgEl.className = 'final-summary-grand-message';
+            }
+        }
+
+        // Action buttons differ per mode
+        const actions = document.getElementById('final-summary-actions');
+        if (practiceMode) {
+            actions.innerHTML = `
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-practice-select')">PICK EVENT</button>
+                <button class="btn btn-primary" onclick="Game.startPractice('${practiceEventId}')">PRACTICE AGAIN</button>
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">MAIN MENU</button>
+            `;
+        } else {
+            actions.innerHTML = `
+                <button class="btn btn-primary" onclick="UI.showScreen('screen-title')">MAIN MENU</button>
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-records')">VIEW RECORDS</button>
+            `;
+        }
+
+        this.showScreen('screen-final-summary');
     },
 
     showEventIntro(event) {
@@ -950,9 +1057,11 @@ EventLogic.ladder = {
             playerName: Game.players[Game.currentPlayerIndex]?.name || '',
             score: state.score.toFixed(2) + ' m',
             timer: state.timer.toFixed(1) + 's',
-            attempt: EVENTS[0].attempts > 1
-                ? `ATTEMPT ${Game.currentAttempt + 1}/${EVENTS[0].attempts}`
-                : '',
+            attempt: Game.practiceMode
+                ? 'PRACTICE'
+                : (EVENTS[0].attempts > 1
+                    ? `ATTEMPT ${Game.currentAttempt + 1}/${EVENTS[0].attempts}`
+                    : ''),
         });
     },
 };
@@ -1695,9 +1804,11 @@ EventLogic.boot = {
             playerName: Game.players[Game.currentPlayerIndex]?.name || '',
             score: hudScore,
             timer: 'Dist: ' + state.blockDist.toFixed(1) + 'm  Wind: ' + (state.wind > 0 ? '+' : '') + state.wind.toFixed(1),
-            attempt: EVENTS.find(e => e.id === 'boot').attempts > 1
-                ? `ATTEMPT ${Game.currentAttempt + 1}/${EVENTS.find(e => e.id === 'boot').attempts}`
-                : '',
+            attempt: Game.practiceMode
+                ? 'PRACTICE'
+                : (EVENTS.find(e => e.id === 'boot').attempts > 1
+                    ? `ATTEMPT ${Game.currentAttempt + 1}/${EVENTS.find(e => e.id === 'boot').attempts}`
+                    : ''),
         });
     },
 };
@@ -2921,12 +3032,12 @@ const SOCCER = {
     sprintDamping: 0.990,     // ~55% retained per second (was 0.94 = brutal halt)
     sprintMaxSpeed: 1.0,      // cap so furious mashing can't finish sprint in a flash
     stumblePenalty: 0.3,
-    // Catching
-    catchMoveSpeed: 200,
+    // Catching - slightly more forgiving radii so it matches visual proximity
+    catchMoveSpeed: 220,
     catchFriction: 0.85,
-    catchRadiusPerfect: 15,
-    catchRadiusGood: 40,
-    catchRadiusDive: 70,
+    catchRadiusPerfect: 22,
+    catchRadiusGood: 55,
+    catchRadiusDive: 90,
     // Scoring
     baseClearPoints: 50,
     maxClearanceBonus: 20,
@@ -3547,11 +3658,21 @@ EventRenderers.soccer = function(ctx, state) {
         ctx.stroke();
     }
 
-    // Chimney
+    // Chimney - sit it on the actual roof slope at its x-position
+    const chimneyX = hx + hw / 4;
+    const chimneyW = 20;
+    const chimneyH = 40;
+    // Use the chimney's right edge (the lower point on the slope) so the chimney
+    // fully meets the roof along its base.
+    const chimneyBaseDist = Math.abs((chimneyX + chimneyW) - hx);
+    const chimneyHalfW = hw / 2;
+    const roofYAtChimney = wallTop - state.houseRoofH * (1 - chimneyBaseDist / chimneyHalfW);
+    const chimneyBottom = roofYAtChimney + 3; // small embed into the roof
+    const chimneyTop = chimneyBottom - chimneyH;
     ctx.fillStyle = '#8B0000';
-    ctx.fillRect(hx + hw / 4, roofPeak - 25, 20, 40);
+    ctx.fillRect(chimneyX, chimneyTop, chimneyW, chimneyH);
     ctx.fillStyle = '#666';
-    ctx.fillRect(hx + hw / 4 - 2, roofPeak - 28, 24, 5);
+    ctx.fillRect(chimneyX - 2, chimneyTop - 3, chimneyW + 4, 5);
 
     // Windows
     const winY = wallTop + 20;
@@ -3700,13 +3821,40 @@ EventRenderers.soccer = function(ctx, state) {
         drawAthlete(ax, SOCCER.groundY, false, false);
     }
 
-    // Ball shadow on ground
+    // Ball shadow + predicted landing target
     if ((state.phase === 'flight' || state.phase === 'catch') && !state.ballLanded) {
-        const shadowAlpha = Math.max(0.1, Math.min(0.4, (SOCCER.groundY - state.ballY) / 300));
+        // Shadow directly below ball (faded)
+        const shadowAlpha = Math.max(0.1, Math.min(0.3, (SOCCER.groundY - state.ballY) / 400));
         ctx.fillStyle = `rgba(0,0,0,${shadowAlpha})`;
         ctx.beginPath();
-        ctx.ellipse(state.ballX, SOCCER.groundY + 2, 10, 4, 0, 0, Math.PI * 2);
+        ctx.ellipse(state.ballX, SOCCER.groundY + 2, 8, 3, 0, 0, Math.PI * 2);
         ctx.fill();
+
+        // Predicted landing marker (helps player position for the catch)
+        const dy = SOCCER.groundY - state.ballY;
+        if (dy > 0 && state.ballVy > -200) { // only show once ball is descending or near-peak
+            const disc = state.ballVy * state.ballVy + 2 * SOCCER.gravity * dy;
+            if (disc >= 0) {
+                const t = (-state.ballVy + Math.sqrt(disc)) / SOCCER.gravity;
+                const predictedX = state.ballX + state.ballVx * t +
+                                   state.wind * SOCCER.windFactor * t * t / 2;
+                // Only show predicted marker past the house (in catchable zone)
+                if (predictedX > state.houseRight + 10) {
+                    ctx.strokeStyle = 'rgba(255, 215, 0, 0.7)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 4]);
+                    ctx.beginPath();
+                    ctx.ellipse(predictedX, SOCCER.groundY + 2, 18, 6, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    // Center crosshair
+                    ctx.fillStyle = 'rgba(255, 215, 0, 0.5)';
+                    ctx.beginPath();
+                    ctx.arc(predictedX, SOCCER.groundY + 2, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
     }
 
     // Ball trail
@@ -4056,9 +4204,11 @@ const Game = {
     animFrame: null,
     lastTime: 0,
     eventState: {},     // Current event's runtime state
+    practiceMode: false, // when true: no records saved, single event, replayable
 
     startCompetition() {
         SFX.init();
+        this.practiceMode = false;
 
         // Gather selected events
         this.selectedEvents = EVENTS.filter(ev => {
@@ -4081,6 +4231,31 @@ const Game = {
             }
             this.players[i].totalPoints = 0;
         }
+
+        this.currentEventIndex = 0;
+        this.currentPlayerIndex = 0;
+        this.currentAttempt = 0;
+        this.eventResults = {};
+
+        this.showNextEvent();
+    },
+
+    startPractice(eventId) {
+        SFX.init();
+        const event = EVENTS.find(ev => ev.id === eventId);
+        if (!event) return;
+        this.practiceMode = true;
+        this.playerCount = 1;
+        this.selectedEvents = [event];
+
+        // Ensure single practice player exists (uses saved avatar)
+        if (!this.players[0]) {
+            this.players[0] = {
+                name: 'PRACTICE',
+                countryId: COUNTRIES[0].id,
+            };
+        }
+        this.players[0].totalPoints = 0;
 
         this.currentEventIndex = 0;
         this.currentPlayerIndex = 0;
@@ -4125,9 +4300,11 @@ const Game = {
             playerName: player.name,
             score: '',
             timer: '',
-            attempt: event.attempts > 1
-                ? `ATTEMPT ${this.currentAttempt + 1}/${event.attempts}`
-                : '',
+            attempt: this.practiceMode
+                ? 'PRACTICE'
+                : (event.attempts > 1
+                    ? `ATTEMPT ${this.currentAttempt + 1}/${event.attempts}`
+                    : ''),
         });
 
         // Initialize event state
@@ -4207,9 +4384,11 @@ const Game = {
 
         // Check for world record (based on total across all attempts, only after last attempt)
         const attemptNum = result.scores.length;
-        const totalAttempts = event.attempts;
+        // In practice mode, each attempt is its own round (no 3-attempt cap)
+        const totalAttempts = this.practiceMode ? 1 : event.attempts;
         const isLastAttempt = attemptNum >= totalAttempts;
-        const isRecord = isLastAttempt &&
+        // Practice mode never updates records
+        const isRecord = isLastAttempt && !this.practiceMode &&
             Save.updateRecord(event.id, result.totalScore, player.name, event.lowerIsBetter);
         const message = isRecord ? 'NEW RECORD!' :
             (this.eventState.foul ? 'FOUL!' : '');
@@ -4241,7 +4420,9 @@ const Game = {
         // Next attempt or next player
         this.currentAttempt++;
 
-        if (this.currentAttempt >= event.attempts) {
+        // In practice mode, each round is one attempt (player can replay via summary screen)
+        const effectiveAttempts = this.practiceMode ? 1 : event.attempts;
+        if (this.currentAttempt >= effectiveAttempts) {
             // Move to next player
             this.currentAttempt = 0;
             this.currentPlayerIndex++;
@@ -4301,14 +4482,63 @@ const Game = {
     },
 
     showFinalResults() {
-        Save.incrementGamesPlayed();
+        if (!this.practiceMode) Save.incrementGamesPlayed();
+
         if (this.playerCount > 1) {
+            // Multiplayer: podium (existing behavior)
             UI.showScreen('screen-podium');
             Podium.render(this.players);
             SFX.play('medal');
-        } else {
-            UI.showScreen('screen-title');
+            return;
         }
+
+        // Single player: build a per-event summary + grand score
+        // Each event awards 0-100 points based on (score / maxScore).
+        // maxScore is a static theoretical-max per event — never changes at runtime.
+        const player = this.players[0];
+        const perEvent = this.selectedEvents.map(ev => {
+            const result = this.eventResults[ev.id][0];
+            const score = result.totalScore;
+            const max = ev.maxScore || 1;
+            const eventPoints = Math.min(100, Math.round((score / max) * 100));
+            return {
+                eventId: ev.id,
+                name: ev.name,
+                score,
+                unit: ev.unit,
+                maxScore: max,
+                eventPoints,
+            };
+        });
+
+        const combinedScore = perEvent.reduce((a, b) => a + b.eventPoints, 0);
+        const maxPossible = this.selectedEvents.length * 100;
+
+        // Capture existing record BEFORE updating so we can show "previous best".
+        const previousGrandRecord = Save.getTotalRecord();
+        let newGrandRecord = false;
+        if (!this.practiceMode) {
+            newGrandRecord = Save.updateTotalRecord(
+                combinedScore,
+                this.selectedEvents.length,
+                this.selectedEvents.map(ev => ev.id),
+                player.name
+            );
+        }
+
+        if (newGrandRecord) SFX.play('fanfare');
+        else SFX.play('medal');
+
+        UI.showFinalSummary({
+            practiceMode: this.practiceMode,
+            practiceEventId: this.practiceMode ? this.selectedEvents[0].id : null,
+            playerName: player.name,
+            perEvent,
+            combinedScore,
+            maxPossible,
+            newGrandRecord,
+            previousGrandRecord,
+        });
     },
 
     stop() {

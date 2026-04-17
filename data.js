@@ -34,6 +34,7 @@ const EVENTS = [
             { keys: 'Balance', desc: 'Keep alternating evenly - uneven presses tilt the ladder!' },
         ],
         worldRecord: 30.00,
+        maxScore: 30,         // 3 × 10m top = hard cap
         totalRungs: 20,
         ladderHeight: 10.0,  // meters
     },
@@ -51,6 +52,7 @@ const EVENTS = [
             { keys: 'SPACE (hold)', desc: 'Charge power, release to throw' },
         ],
         worldRecord: 300,
+        maxScore: 500,        // ~170 pts/attempt with max spin + distance + seagull
     },
     {
         id: 'rockSkip',
@@ -66,6 +68,7 @@ const EVENTS = [
             { keys: 'SPACE (hold)', desc: 'Charge power, release to throw' },
         ],
         worldRecord: 85.00,
+        maxScore: 275,        // ~91m/attempt with 21 perfect skips chained
     },
     {
         id: 'soccer',
@@ -81,6 +84,7 @@ const EVENTS = [
             { keys: 'LEFT / RIGHT', desc: 'Sprint around house, then position for catch' },
         ],
         worldRecord: 400,
+        maxScore: 450,        // ~150 pts/attempt with perfect kick/sprint/catch + wind
     },
 ];
 

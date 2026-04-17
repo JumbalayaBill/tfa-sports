@@ -18,6 +18,7 @@
             </div>
             <div class="title-menu">
                 <button class="btn btn-primary" onclick="UI.showScreen('screen-player-select')">START GAME</button>
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-practice-select')">PRACTICE</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-avatar')">CUSTOMIZE</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-records')">RECORDS</button>
                 <button class="btn btn-secondary" onclick="UI.showScreen('screen-how-to-play')">HOW TO PLAY</button>
@@ -128,6 +129,38 @@
                     <!-- Filled dynamically -->
                 </div>
                 <button class="btn btn-primary" onclick="Game.proceedFromStandings()">CONTINUE</button>
+            </div>
+        </div>
+
+        <!-- PRACTICE SELECT SCREEN -->
+        <div id="screen-practice-select" class="screen">
+            <div class="screen-header">
+                <h2>PRACTICE</h2>
+                <p class="hint">Pick an event to practice. Scores won't be saved.</p>
+            </div>
+            <div id="practice-event-list" class="event-list">
+                <!-- Filled dynamically -->
+            </div>
+            <div class="screen-footer">
+                <button class="btn btn-secondary" onclick="UI.showScreen('screen-title')">BACK</button>
+            </div>
+        </div>
+
+        <!-- FINAL SUMMARY SCREEN (single-player + practice) -->
+        <div id="screen-final-summary" class="screen">
+            <div class="final-summary-content">
+                <h2 id="final-summary-title">FINAL RESULTS</h2>
+                <div id="final-summary-list" class="final-summary-list">
+                    <!-- Filled dynamically -->
+                </div>
+                <div id="final-summary-grand-box" class="final-summary-grand">
+                    <span class="final-summary-grand-label">GRAND SCORE</span>
+                    <span id="final-summary-grand-score" class="final-summary-grand-score">0</span>
+                    <span id="final-summary-grand-message" class="final-summary-grand-message"></span>
+                </div>
+                <div id="final-summary-actions" class="screen-footer">
+                    <!-- Filled dynamically -->
+                </div>
             </div>
         </div>
 

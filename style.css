@@ -797,6 +797,134 @@ body {
     font-size: 12px;
 }
 
+.record-row-grand {
+    margin-top: 8px;
+    border: 2px solid var(--accent);
+    background: linear-gradient(90deg, rgba(255,215,0,0.05), rgba(255,215,0,0.15));
+}
+
+.record-row-grand .record-event {
+    color: var(--accent);
+    text-shadow: 1px 1px 0 #000;
+}
+
+.record-row-grand .record-score {
+    color: var(--accent);
+    font-weight: bold;
+    font-size: 16px;
+}
+
+/* --- Practice & Final Summary --- */
+.practice-event-card {
+    transition: border-color 0.1s, transform 0.1s;
+}
+
+.practice-event-card:hover {
+    border-color: var(--accent);
+    transform: translateX(2px);
+}
+
+.practice-arrow {
+    color: var(--accent);
+    font-size: 18px;
+    padding-right: 4px;
+}
+
+.final-summary-content {
+    width: 100%;
+    max-width: 600px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 20px;
+}
+
+.final-summary-content h2 {
+    font-size: 26px;
+    color: var(--accent);
+    text-shadow: 2px 2px 0 #000;
+    letter-spacing: 3px;
+}
+
+.final-summary-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.final-summary-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border: 1px solid #333;
+    font-size: 14px;
+}
+
+.final-summary-event {
+    flex: 1;
+    color: var(--accent);
+    font-weight: bold;
+}
+
+.final-summary-score {
+    color: var(--text-bright);
+    min-width: 110px;
+    text-align: right;
+}
+
+.final-summary-pi {
+    color: var(--success);
+    min-width: 60px;
+    text-align: right;
+    font-weight: bold;
+}
+
+.final-summary-grand {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 16px;
+    margin-top: 6px;
+    border: 2px solid var(--accent);
+    background: linear-gradient(180deg, rgba(255,215,0,0.05), rgba(255,215,0,0.15));
+    text-align: center;
+}
+
+.final-summary-grand-label {
+    color: var(--text-primary);
+    letter-spacing: 4px;
+    font-size: 12px;
+}
+
+.final-summary-grand-score {
+    color: var(--accent);
+    font-size: 36px;
+    font-weight: bold;
+    text-shadow: 2px 2px 0 #000;
+}
+
+.final-summary-grand-message {
+    color: #999;
+    font-size: 12px;
+}
+
+.final-summary-grand-message.new-record {
+    color: var(--success);
+    font-weight: bold;
+    font-size: 14px;
+    animation: blink 1s steps(2) infinite;
+}
+
+.final-summary-grand.hidden {
+    display: none;
+}
+
 /* --- How to Play --- */
 .how-to-play-content {
     max-width: 500px;
