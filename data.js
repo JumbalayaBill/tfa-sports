@@ -86,6 +86,22 @@ const EVENTS = [
         worldRecord: 400,
         maxScore: 450,        // ~150 pts/attempt with perfect kick/sprint/catch + wind
     },
+    {
+        id: 'bottleThrow',
+        name: 'Bottle Throw',
+        description: 'Spin a bottle and land it with the right number of full rotations! 5 levels: 1, 2, 3, 4, 5 rotations. Watch out for wind and bumblebees!',
+        icon: 'bottleThrow',
+        category: 'field',
+        attempts: 3,
+        unit: 'pts',
+        lowerIsBetter: false,
+        controls: [
+            { keys: 'SPACE (tap)', desc: 'Stop the needle to set spin rate' },
+            { keys: 'SPACE (hold)', desc: 'Charge power, release to throw' },
+        ],
+        worldRecord: 600,
+        maxScore: 900,        // 300 pts/attempt × 3 attempts = 900 (perfect-precision clear of all 5 levels per attempt)
+    },
 ];
 
 // --- Medal point values ---

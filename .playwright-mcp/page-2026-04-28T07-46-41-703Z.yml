@@ -1,0 +1,36 @@
+- generic [ref=e18]:
+  - generic [ref=e19]:
+    - heading "PRACTICE" [level=2] [ref=e20]
+    - paragraph [ref=e21]: Pick an event to practice. Scores won't be saved.
+  - generic [ref=e22]:
+    - generic [ref=e23] [cursor=pointer]:
+      - generic [ref=e25]: 🗼
+      - generic [ref=e26]:
+        - heading "Ladder Climbing" [level=3] [ref=e27]
+        - paragraph [ref=e28]: Climb a freestanding ladder to the top without tipping over! The higher you go, the harder it gets to keep your balance.
+      - generic [ref=e30]: ▶
+    - generic [ref=e31] [cursor=pointer]:
+      - generic [ref=e33]: 🥾
+      - generic [ref=e34]:
+        - heading "Boot Throwing" [level=3] [ref=e35]
+        - paragraph [ref=e36]: Hurl a boot and land it on the chopping block! Add spin for bonus points, but watch the wind!
+      - generic [ref=e38]: ▶
+    - generic [ref=e39] [cursor=pointer]:
+      - generic [ref=e41]: 🌊
+      - generic [ref=e42]:
+        - heading "Rock Skipping" [level=3] [ref=e43]
+        - paragraph [ref=e44]: Skip a stone across the lake! Set your angle, power up your throw, then tap with perfect timing on each bounce!
+      - generic [ref=e46]: ▶
+    - generic [ref=e47] [cursor=pointer]:
+      - generic [ref=e49]: ⚽
+      - generic [ref=e50]:
+        - heading "Soccer Over House" [level=3] [ref=e51]
+        - paragraph [ref=e52]: Kick a soccer ball over the house and sprint to the other side to catch it! Clear the roof, run fast, and make the catch!
+      - generic [ref=e54]: ▶
+    - generic [ref=e55] [cursor=pointer]:
+      - generic [ref=e57]: 🍾
+      - generic [ref=e58]:
+        - heading "Bottle Throw" [level=3] [ref=e59]
+        - paragraph [ref=e60]: "Spin a bottle and land it with the right number of full rotations! 5 levels: 1, 2, 3, 4, 5 rotations. Watch out for wind and bumblebees!"
+      - generic [ref=e62]: ▶
+  - button "BACK" [ref=e64] [cursor=pointer]

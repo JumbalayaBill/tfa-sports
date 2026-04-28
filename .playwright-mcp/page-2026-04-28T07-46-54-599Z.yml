@@ -1,0 +1,11 @@
+- generic [ref=e66]:
+  - heading "Bottle Throw" [level=2] [ref=e67]
+  - paragraph [ref=e68]: "Spin a bottle and land it with the right number of full rotations! 5 levels: 1, 2, 3, 4, 5 rotations. Watch out for wind and bumblebees!"
+  - generic [ref=e69]:
+    - generic [ref=e70]:
+      - generic [ref=e71]: SPACE (tap)
+      - generic [ref=e72]: Stop the needle to set spin rate
+    - generic [ref=e73]:
+      - generic [ref=e74]: SPACE (hold)
+      - generic [ref=e75]: Charge power, release to throw
+  - button "READY" [ref=e76] [cursor=pointer]

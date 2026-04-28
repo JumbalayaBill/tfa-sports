@@ -1,0 +1,15 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - heading "TFA SPORTS" [level=1] [ref=e5]
+    - generic [ref=e6]: THE ULTIMATE ATHLETIC CHALLENGE
+    - generic [ref=e7]: "- 1994 -"
+  - generic [ref=e8]:
+    - button "START GAME" [ref=e9] [cursor=pointer]
+    - button "PRACTICE" [ref=e10] [cursor=pointer]
+    - button "CUSTOMIZE" [ref=e11] [cursor=pointer]
+    - button "RECORDS" [ref=e12] [cursor=pointer]
+    - button "LEADERBOARD" [ref=e13] [cursor=pointer]
+    - button "HOW TO PLAY" [ref=e14] [cursor=pointer]
+  - generic [ref=e15]:
+    - generic [ref=e16]: INSERT COIN TO CONTINUE
+    - generic [ref=e17]: v0.8

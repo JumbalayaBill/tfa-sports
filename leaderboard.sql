@@ -22,7 +22,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE public.leaderboard (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     player_name TEXT        NOT NULL CHECK (char_length(player_name) BETWEEN 1 AND 12),
-    event_id    TEXT        NOT NULL CHECK (event_id IN ('ladder', 'boot', 'rockSkip', 'soccer', 'grand')),
+    event_id    TEXT        NOT NULL CHECK (event_id IN ('ladder', 'boot', 'rockSkip', 'soccer', 'bottleThrow', 'grand')),
     score       NUMERIC     NOT NULL,
     event_count SMALLINT    DEFAULT NULL,  -- only used for grand scores
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -55,11 +55,12 @@ CREATE TABLE public.score_bounds (
 );
 
 INSERT INTO public.score_bounds (event_id, max_score) VALUES
-    ('ladder',   36),   -- 30 * 1.2
-    ('boot',     660),  -- 400 * 1.2 + headroom for seagull bonus (3 x 25 = 75)
-    ('rockSkip', 330),  -- 275 * 1.2
-    ('soccer',   540),  -- 450 * 1.2
-    ('grand',    480);  -- 4 events * 100 * 1.2
+    ('ladder',      36),    -- 30 * 1.2
+    ('boot',        660),   -- 400 * 1.2 + headroom for seagull bonus (3 x 25 = 75)
+    ('rockSkip',    330),   -- 275 * 1.2
+    ('soccer',      540),   -- 450 * 1.2
+    ('bottleThrow', 1080),  -- 900 * 1.2
+    ('grand',       600);   -- 5 events * 100 * 1.2
 
 ALTER TABLE public.score_bounds ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "score_bounds_select" ON public.score_bounds FOR SELECT USING (true);
@@ -111,7 +112,7 @@ CREATE OR REPLACE FUNCTION public.submit_score(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_secret    TEXT;
@@ -122,7 +123,7 @@ DECLARE
     v_last_sub  TIMESTAMPTZ;
 BEGIN
     -- 1. Validate event_id
-    IF p_event_id NOT IN ('ladder', 'boot', 'rockSkip', 'soccer', 'grand') THEN
+    IF p_event_id NOT IN ('ladder', 'boot', 'rockSkip', 'soccer', 'bottleThrow', 'grand') THEN
         RETURN jsonb_build_object('ok', false, 'error', 'invalid event');
     END IF;
 

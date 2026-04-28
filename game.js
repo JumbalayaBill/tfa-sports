@@ -244,10 +244,11 @@ const UI = {
 
     getEventIcon(icon) {
         const icons = {
-            ladder:   '<div class="pixel-icon">&#128508;</div>',
-            boot:     '<div class="pixel-icon">&#129406;</div>',
-            rockSkip: '<div class="pixel-icon">&#127754;</div>',
-            soccer:   '<div class="pixel-icon">&#9917;</div>',
+            ladder:      '<div class="pixel-icon">&#128508;</div>',
+            boot:        '<div class="pixel-icon">&#129406;</div>',
+            rockSkip:    '<div class="pixel-icon">&#127754;</div>',
+            soccer:      '<div class="pixel-icon">&#9917;</div>',
+            bottleThrow: '<div class="pixel-icon">&#127870;</div>',
         };
         return icons[icon] || '<div class="pixel-icon">?</div>';
     },
@@ -4092,6 +4093,822 @@ EventRenderers.soccer = function(ctx, state) {
 
     ctx.restore(); // end shake transform
 };
+
+// ============================================================
+//  BOTTLE THROW - Event Implementation
+// ============================================================
+
+const BOTTLE_THROW = {
+    maxLevel: 5,
+    targetRotations:   [1,    2,    3,    4,    5   ],   // index = level - 1
+    toleranceDegrees:  [20,   20,   20,   20,   20  ],   // ± tolerance per level (constant — challenge comes from rotation count, wind, bee)
+    windRange:         [3.0,  4.5,  6.0,  7.5,  9.0 ],   // ± deg/sec² per level (tail+, head−)
+    beeSpawnChance:    [0.10, 0.18, 0.28, 0.40, 0.55],   // probability per level
+
+    // Spin (angular velocity in deg/sec)
+    minSpinRate: 90,
+    maxSpinRate: 1080,                   // 3 rev/sec at max
+    spinNeedleSpeed: 0.80,               // needle oscillation rate (0..1 / sec) — constant across levels
+
+    // Power → flight duration
+    minFlightDur: 0.8,                   // sec
+    maxFlightDur: 2.5,                   // sec
+    powerChargeRate: 0.55,               // 0..1 per sec while holding
+
+    // Bumblebee
+    beeMultiplierMin: 0.6,
+    beeMultiplierMax: 1.5,
+    beeRadius: 24,
+    beeBaseSpeed: 220,                   // px/sec
+
+    // Visual flight arc
+    arcHeight: 130,                      // peak px above hand
+    handX: 220,
+    handY: 360,
+    landX: 700,                          // bottle lands here
+
+    // Scoring (hybrid: base + precision bonus)
+    levelBaseMult: 4,                    // base = N * 4
+    levelPrecMult: 16,                   // bonus = N * 16 * precision
+};
+
+EventLogic.bottleThrow = {
+    init(state) {
+        state.frame = 0;
+        state.timer = 0;
+        state.score = 0;
+        state.attemptScore = 0;
+        state.level = 1;
+        state.levelResults = [];
+
+        this._startLevel(state);
+    },
+
+    _startLevel(state) {
+        const lv = state.level;
+        const lvIdx = lv - 1;
+
+        // Phase machine reset
+        state.phase = 'ready';
+        state.readyTimer = 0.6;          // brief beat before spin begins so player sees the new level
+
+        // Spin
+        state.spin = 0;                  // locked spin rate (deg/sec)
+        state.spinNeedle = 0;            // 0..1
+        state.spinNeedleDir = 1;
+        state.spinSet = false;
+
+        // Power
+        state.power = 0;                 // 0..1
+        state.powerCharging = false;
+        state.powerSet = false;
+        state.powerValue = 0;
+
+        // Flight
+        state.flightDur = 0;             // computed on throw
+        state.flightTime = 0;
+        state.bottleAngle = 0;           // current display angle (deg)
+        state.totalRotation = 0;         // cumulative rotation (deg) — used for scoring
+        state.spinRate = 0;              // live angular velocity (changes with wind / bee)
+
+        // Wind (constant per level, applied as angular acceleration to spinRate during flight)
+        const wRange = BOTTLE_THROW.windRange[lvIdx];
+        state.wind = (Math.random() - 0.5) * 2 * wRange;
+        state.wind = Math.round(state.wind * 10) / 10;
+
+        // Bee
+        state.bee = null;
+        state.beeHit = false;
+        state.beeMultiplier = 1.0;
+        if (Math.random() < BOTTLE_THROW.beeSpawnChance[lvIdx]) {
+            const fromLeft = Math.random() < 0.5;
+            state.bee = {
+                x: fromLeft ? -40 : 940,
+                y: 130 + Math.random() * 140,
+                dir: fromLeft ? 1 : -1,
+                speed: BOTTLE_THROW.beeBaseSpeed * (0.85 + Math.random() * 0.4),
+                bobPhase: Math.random() * Math.PI * 2,
+                wingFrame: 0,
+                alive: true,
+            };
+        }
+
+        // Result transient
+        state.resultTimer = 0;
+        state.levelOffset = 0;            // signed offset from target (deg)
+        state.levelPoints = 0;
+        state.levelPrecision = 0;
+        state.levelCleared = false;
+
+        // Particles
+        state.particles = [];
+
+        // Visual flight position
+        state.bottleX = BOTTLE_THROW.handX;
+        state.bottleY = BOTTLE_THROW.handY - 30;
+    },
+
+    handleInput(state, code, type) {
+        if (code !== 'Space') return;
+
+        // Skip input during ready beat
+        if (state.phase === 'ready' && type === 'down') {
+            // Allow player to "skip" the ready beat by tapping
+            state.readyTimer = 0;
+            state.phase = 'spin';
+            SFX.play('charge');
+            return;
+        }
+
+        // Spin phase — tap to lock needle
+        if (state.phase === 'spin' && type === 'down') {
+            state.spinSet = true;
+            // Linear mapping needle 0..1 → minSpinRate..maxSpinRate
+            const rate = BOTTLE_THROW.minSpinRate + state.spinNeedle * (BOTTLE_THROW.maxSpinRate - BOTTLE_THROW.minSpinRate);
+            state.spin = Math.round(rate);
+            state.phase = 'power';
+            state.power = 0;
+            SFX.play('tick');
+            return;
+        }
+
+        // Power phase — hold to charge, release to throw
+        if (state.phase === 'power') {
+            if (type === 'down') {
+                state.powerCharging = true;
+            }
+            if (type === 'up' && state.powerCharging) {
+                state.powerCharging = false;
+                state.powerSet = true;
+                state.powerValue = state.power;
+                state.phase = 'throw';
+                state.throwAnim = 1.0;
+                SFX.play('throw');
+            }
+            return;
+        }
+    },
+
+    update(state, dt) {
+        state.frame++;
+        state.timer += dt;
+
+        // --- Ready beat ---
+        if (state.phase === 'ready') {
+            state.readyTimer -= dt;
+            if (state.readyTimer <= 0) {
+                state.phase = 'spin';
+                SFX.play('charge');
+            }
+        }
+
+        // --- Spin needle oscillation (constant speed across all levels) ---
+        if (state.phase === 'spin') {
+            state.spinNeedle += state.spinNeedleDir * BOTTLE_THROW.spinNeedleSpeed * dt;
+            if (state.spinNeedle >= 1) { state.spinNeedle = 1; state.spinNeedleDir = -1; }
+            if (state.spinNeedle <= 0) { state.spinNeedle = 0; state.spinNeedleDir = 1; }
+        }
+
+        // --- Power charging ---
+        if (state.phase === 'power' && state.powerCharging) {
+            state.power = Math.min(1, state.power + BOTTLE_THROW.powerChargeRate * dt);
+            if (state.frame % 8 === 0) SFX.play('charge');
+        }
+
+        // --- Throw windup ---
+        if (state.phase === 'throw') {
+            state.throwAnim -= dt * 5;
+            if (state.throwAnim <= 0) {
+                state.throwAnim = 0;
+                state.phase = 'flight';
+                // Power → flight duration
+                state.flightDur = BOTTLE_THROW.minFlightDur
+                    + state.powerValue * (BOTTLE_THROW.maxFlightDur - BOTTLE_THROW.minFlightDur);
+                state.flightTime = 0;
+                state.spinRate = state.spin;
+                state.totalRotation = 0;
+                SFX.play('woosh');
+            }
+        }
+
+        // --- Flight ---
+        if (state.phase === 'flight') {
+            state.flightTime += dt;
+            const t = Math.min(1, state.flightTime / state.flightDur);
+
+            // Apply wind (constant angular acceleration on spinRate)
+            state.spinRate += state.wind * dt;
+
+            // Update bottle angle and totalRotation
+            const dRot = state.spinRate * dt;
+            state.bottleAngle = (state.bottleAngle + dRot) % 360;
+            state.totalRotation += dRot;
+
+            // Visual arc (parabolic, hand → land)
+            state.bottleX = BOTTLE_THROW.handX + (BOTTLE_THROW.landX - BOTTLE_THROW.handX) * t;
+            const arc = 4 * t * (1 - t); // 0 → 1 → 0
+            state.bottleY = (BOTTLE_THROW.handY - 30) - arc * BOTTLE_THROW.arcHeight - (1 - t) * 0; // hand height baseline; lands at handY-30 too (flat surface table)
+            // Slight downward drop on landing for visual "thump"
+            state.bottleY += t * t * 8;
+
+            // Bee movement & collision
+            if (state.bee && state.bee.alive) {
+                state.bee.x += state.bee.dir * state.bee.speed * dt;
+                state.bee.wingFrame += dt * 14;
+                state.bee.y += Math.sin(state.timer * 4 + state.bee.bobPhase) * 0.5;
+
+                if (!state.beeHit) {
+                    const dx = state.bottleX - state.bee.x;
+                    const dy = state.bottleY - state.bee.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < BOTTLE_THROW.beeRadius) {
+                        state.beeHit = true;
+                        state.bee.alive = false;
+                        state.beeMultiplier = BOTTLE_THROW.beeMultiplierMin
+                            + Math.random() * (BOTTLE_THROW.beeMultiplierMax - BOTTLE_THROW.beeMultiplierMin);
+                        state.spinRate *= state.beeMultiplier;
+                        SFX.play('thunk');
+                        // Burst particles
+                        for (let i = 0; i < 14; i++) {
+                            state.particles.push({
+                                x: state.bee.x, y: state.bee.y,
+                                vx: (Math.random() - 0.5) * 180,
+                                vy: (Math.random() - 0.5) * 140,
+                                life: 0.9,
+                                color: i % 2 === 0 ? '#FFD54F' : '#212121',
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (t >= 1) {
+                // Landing — compute scoring
+                state.phase = 'landing';
+                const target = 360 * BOTTLE_THROW.targetRotations[state.level - 1];
+                const tolerance = BOTTLE_THROW.toleranceDegrees[state.level - 1];
+                const offset = state.totalRotation - target;
+                state.levelOffset = offset;
+
+                if (Math.abs(offset) <= tolerance) {
+                    state.levelCleared = true;
+                    const precision = Math.max(0, 1 - Math.abs(offset) / tolerance);
+                    state.levelPrecision = precision;
+                    const lv = state.level;
+                    state.levelPoints = Math.round(
+                        lv * BOTTLE_THROW.levelBaseMult
+                        + lv * BOTTLE_THROW.levelPrecMult * precision
+                    );
+                    state.attemptScore += state.levelPoints;
+                    state.score = state.attemptScore;
+                    SFX.play(precision > 0.7 ? 'fanfare' : 'thunk');
+                    // Sparkle particles
+                    for (let i = 0; i < 18; i++) {
+                        state.particles.push({
+                            x: state.bottleX, y: state.bottleY,
+                            vx: (Math.random() - 0.5) * 200,
+                            vy: -Math.random() * 180 - 40,
+                            life: 1.2,
+                            color: precision > 0.7 ? '#FFD700' : '#81D4FA',
+                        });
+                    }
+                    state.resultTimer = 1.8;
+                } else {
+                    state.levelCleared = false;
+                    state.levelPrecision = 0;
+                    state.levelPoints = 0;
+                    SFX.play('miss');
+                    // Dust particles
+                    for (let i = 0; i < 10; i++) {
+                        state.particles.push({
+                            x: state.bottleX, y: state.bottleY,
+                            vx: (Math.random() - 0.5) * 100,
+                            vy: -Math.random() * 60 - 10,
+                            life: 0.9,
+                            color: '#A1887F',
+                        });
+                    }
+                    state.resultTimer = 2.4;
+                }
+
+                state.levelResults.push({
+                    level: state.level,
+                    cleared: state.levelCleared,
+                    offset: state.levelOffset,
+                    precision: state.levelPrecision,
+                    points: state.levelPoints,
+                });
+            }
+        }
+
+        // --- Landing result display ---
+        if (state.phase === 'landing') {
+            state.resultTimer -= dt;
+            if (state.resultTimer <= 0) {
+                if (state.levelCleared && state.level < BOTTLE_THROW.maxLevel) {
+                    // Advance to next level
+                    state.level++;
+                    this._startLevel(state);
+                } else {
+                    // Attempt complete (cleared L5 or failed)
+                    state.phase = 'done';
+                    state.score = state.attemptScore;
+                }
+            }
+        }
+
+        // --- Particles update ---
+        if (state.particles.length > 0) {
+            state.particles.forEach(p => {
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.vy += 220 * dt;
+                p.life -= dt;
+            });
+            state.particles = state.particles.filter(p => p.life > 0);
+        }
+
+        // --- HUD ---
+        let hudScore;
+        if (state.phase === 'spin') {
+            hudScore = 'SPIN ' + Math.round(BOTTLE_THROW.minSpinRate
+                + state.spinNeedle * (BOTTLE_THROW.maxSpinRate - BOTTLE_THROW.minSpinRate)) + '°/s';
+        } else if (state.phase === 'power') {
+            hudScore = 'POWER ' + Math.round(state.power * 100) + '%';
+        } else if (state.phase === 'flight' || state.phase === 'landing') {
+            const target = BOTTLE_THROW.targetRotations[state.level - 1];
+            hudScore = 'ROT ' + (state.totalRotation / 360).toFixed(2) + ' / ' + target;
+        } else {
+            hudScore = state.attemptScore + ' pts';
+        }
+
+        const targetN = BOTTLE_THROW.targetRotations[state.level - 1];
+        UI.updateHUD({
+            eventName: 'Bottle Throw',
+            playerName: Game.players[Game.currentPlayerIndex]?.name || '',
+            score: hudScore,
+            timer: 'L' + state.level + ' • TGT ' + targetN + ' rot • Wind ' + (state.wind > 0 ? '+' : '') + state.wind.toFixed(1) + '°/s²',
+            attempt: Game.practiceMode
+                ? 'PRACTICE'
+                : (EVENTS.find(e => e.id === 'bottleThrow').attempts > 1
+                    ? `ATTEMPT ${Game.currentAttempt + 1}/${EVENTS.find(e => e.id === 'bottleThrow').attempts}`
+                    : ''),
+        });
+    },
+};
+
+EventRenderers.bottleThrow = function(ctx, state) {
+    const W = 900, H = 500;
+
+    // --- Sky ---
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, 220);
+    skyGrad.addColorStop(0, '#7BC8E8');
+    skyGrad.addColorStop(1, '#D4ECF7');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // --- Sun ---
+    ctx.fillStyle = 'rgba(255, 235, 90, 0.55)';
+    ctx.beginPath();
+    ctx.arc(760, 90, 40, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 235, 90, 0.25)';
+    ctx.beginPath();
+    ctx.arc(760, 90, 60, 0, Math.PI * 2);
+    ctx.fill();
+
+    // --- Distant hills ---
+    ctx.fillStyle = '#7CB342';
+    ctx.beginPath();
+    ctx.moveTo(0, 250);
+    for (let x = 0; x <= W; x += 30) {
+        const yy = 250 - 30 * Math.sin(x * 0.012) - 18 * Math.sin(x * 0.024 + 1.7);
+        ctx.lineTo(x, yy);
+    }
+    ctx.lineTo(W, 280); ctx.lineTo(0, 280);
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Garden ground ---
+    const groundY = 400;
+    const grassGrad = ctx.createLinearGradient(0, 250, 0, H);
+    grassGrad.addColorStop(0, '#9CCC65');
+    grassGrad.addColorStop(0.5, '#7CB342');
+    grassGrad.addColorStop(1, '#558B2F');
+    ctx.fillStyle = grassGrad;
+    ctx.fillRect(0, 250, W, H - 250);
+
+    // --- Picnic table (the throwing surface) ---
+    const tableY = groundY - 30;
+    ctx.fillStyle = '#8D6E63';
+    ctx.fillRect(120, tableY, 780, 12);
+    ctx.fillStyle = '#5D4037';
+    ctx.fillRect(120, tableY + 12, 780, 4);
+    // Table grain
+    ctx.strokeStyle = 'rgba(78, 52, 46, 0.5)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 6; i++) {
+        ctx.beginPath();
+        ctx.moveTo(140 + i * 130, tableY + 2);
+        ctx.lineTo(140 + i * 130, tableY + 10);
+        ctx.stroke();
+    }
+    // Table legs
+    ctx.fillStyle = '#5D4037';
+    ctx.fillRect(160, tableY + 16, 10, 50);
+    ctx.fillRect(840, tableY + 16, 10, 50);
+
+    // --- Top banner: level + target ---
+    const targetN = BOTTLE_THROW.targetRotations[state.level - 1];
+    const tolerance = BOTTLE_THROW.toleranceDegrees[state.level - 1];
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(W / 2 - 200, 14, 400, 36);
+    ctx.fillStyle = '#FFD54F';
+    ctx.font = 'bold 18px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('LEVEL ' + state.level + ' / 5  •  TARGET ' + targetN + ' ROT  •  ±' + tolerance + '°', W / 2, 32);
+
+    // --- Wind indicator (top-left) ---
+    const windAbs = Math.abs(state.wind);
+    const windStrong = windAbs > BOTTLE_THROW.windRange[state.level - 1] * 0.6;
+    ctx.fillStyle = windStrong ? 'rgba(180, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(20, 14, 240, 36);
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(20, 14, 240, 36);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('WIND', 30, 22);
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText((state.wind > 0 ? '+' : '') + state.wind.toFixed(1) + '°/s²', 30, 42);
+    // Spin-effect suffix (unambiguous: tailwind adds spin, headwind subtracts)
+    ctx.font = 'bold 12px monospace';
+    ctx.fillStyle = state.wind > 0 ? '#81C784' : (state.wind < 0 ? '#EF5350' : '#FFFFFF');
+    const effectLabel = state.wind > 0 ? '→ +SPIN' : (state.wind < 0 ? '→ −SPIN' : '');
+    ctx.fillText(effectLabel, 90, 42);
+    // Arrow
+    const arrowX = 210;
+    ctx.fillStyle = state.wind > 0 ? '#81C784' : (state.wind < 0 ? '#EF5350' : '#FFFFFF');
+    ctx.beginPath();
+    if (state.wind >= 0) {
+        ctx.moveTo(arrowX, 24); ctx.lineTo(arrowX + 30, 32); ctx.lineTo(arrowX, 40);
+    } else {
+        ctx.moveTo(arrowX + 30, 24); ctx.lineTo(arrowX, 32); ctx.lineTo(arrowX + 30, 40);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Score so far (top-right) ---
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(W - 220, 14, 200, 36);
+    ctx.fillStyle = '#FFD54F';
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('SCORE: ' + state.attemptScore, W - 30, 32);
+    ctx.textBaseline = 'alphabetic';
+
+    // --- Bumblebee (drawn behind/around bottle) ---
+    if (state.bee && state.bee.alive) {
+        const b = state.bee;
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        // Wings
+        const wingFlap = Math.abs(Math.sin(b.wingFrame));
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.beginPath();
+        ctx.ellipse(-6, -10, 12, 5 + wingFlap * 4, -0.3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(6, -10, 12, 5 + wingFlap * 4, 0.3, 0, Math.PI * 2);
+        ctx.fill();
+        // Body (yellow with black stripes)
+        ctx.fillStyle = '#FFC107';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 18, 12, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#212121';
+        ctx.fillRect(-12, -3, 4, 6);
+        ctx.fillRect(-2, -5, 4, 10);
+        ctx.fillRect(8, -3, 4, 6);
+        // Head
+        ctx.fillStyle = '#212121';
+        ctx.beginPath();
+        ctx.arc(b.dir * 16, 0, 6, 0, Math.PI * 2);
+        ctx.fill();
+        // Eye
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(b.dir * 18, -1, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // --- Hand + bottle (pre-throw) ---
+    const handX = BOTTLE_THROW.handX;
+    const handY = BOTTLE_THROW.handY;
+    const showHandBottle = state.phase === 'ready' || state.phase === 'spin'
+        || state.phase === 'power' || state.phase === 'throw';
+
+    if (showHandBottle) {
+        // Forearm coming up from below
+        ctx.fillStyle = '#E8B89D';
+        ctx.fillRect(handX - 18, handY + 6, 36, 80);
+        // Sleeve
+        ctx.fillStyle = '#1E88E5';
+        ctx.fillRect(handX - 22, handY + 60, 44, 30);
+        // Hand
+        ctx.fillStyle = '#E8B89D';
+        ctx.beginPath();
+        ctx.arc(handX, handY + 4, 18, 0, Math.PI * 2);
+        ctx.fill();
+        // Fingers wrapped (thumb arc)
+        ctx.fillStyle = '#D4A180';
+        ctx.fillRect(handX - 18, handY - 8, 8, 16);
+        ctx.fillRect(handX + 10, handY - 8, 8, 16);
+
+        // Bottle
+        const bottleAng = state.phase === 'throw'
+            ? -state.throwAnim * 0.6
+            : 0;
+        const bobble = state.phase === 'spin' ? Math.sin(state.timer * 6) * 1.5 : 0;
+        const liftY = state.phase === 'throw' ? -state.throwAnim * 14 : 0;
+
+        ctx.save();
+        ctx.translate(handX, handY - 30 + bobble + liftY);
+        ctx.rotate(bottleAng);
+        drawBottle(ctx, 0, 0);
+        ctx.restore();
+    }
+
+    // --- Bottle in flight ---
+    if (state.phase === 'flight' || state.phase === 'landing') {
+        ctx.save();
+        ctx.translate(state.bottleX, state.bottleY);
+        ctx.rotate((state.bottleAngle * Math.PI) / 180);
+        drawBottle(ctx, 0, 0);
+        ctx.restore();
+
+        // Trail (faint motion blur)
+        if (state.phase === 'flight') {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            for (let i = 1; i <= 4; i++) {
+                const tt = Math.max(0, (state.flightTime - i * 0.04) / state.flightDur);
+                if (tt <= 0) continue;
+                const tx = BOTTLE_THROW.handX + (BOTTLE_THROW.landX - BOTTLE_THROW.handX) * tt;
+                const arc = 4 * tt * (1 - tt);
+                const ty = (BOTTLE_THROW.handY - 30) - arc * BOTTLE_THROW.arcHeight + tt * tt * 8;
+                ctx.beginPath();
+                ctx.arc(tx, ty, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    }
+
+    // --- Live rotation counter (during flight + landing) ---
+    if (state.phase === 'flight' || state.phase === 'landing') {
+        const rot = state.totalRotation / 360;
+        const target = BOTTLE_THROW.targetRotations[state.level - 1];
+        const tol = BOTTLE_THROW.toleranceDegrees[state.level - 1];
+        const offset = state.totalRotation - 360 * target;
+        const overshoot = Math.abs(offset) > tol && state.totalRotation > 360 * target;
+
+        let counterColor;
+        if (state.phase === 'landing') {
+            counterColor = state.levelCleared ? '#66BB6A' : '#EF5350';
+        } else if (overshoot) {
+            counterColor = '#EF5350';
+        } else if (Math.abs(offset) <= tol) {
+            counterColor = '#FFD54F';
+        } else {
+            counterColor = '#FFFFFF';
+        }
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+        ctx.fillRect(W / 2 - 110, 60, 220, 50);
+        ctx.strokeStyle = counterColor;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(W / 2 - 110, 60, 220, 50);
+        ctx.fillStyle = counterColor;
+        ctx.font = 'bold 26px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(rot.toFixed(2) + ' / ' + target, W / 2, 85);
+    }
+
+    // --- Spin gauge (during spin phase) ---
+    if (state.phase === 'spin') {
+        const gx = W / 2 - 180;
+        const gy = 130;
+        const gw = 360;
+        const gh = 36;
+
+        // Background
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(gx - 10, gy - 24, gw + 20, gh + 50);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(gx, gy, gw, gh);
+
+        // Color gradient (low=cool, high=hot)
+        const grad = ctx.createLinearGradient(gx, gy, gx + gw, gy);
+        grad.addColorStop(0, '#42A5F5');
+        grad.addColorStop(0.5, '#FFEE58');
+        grad.addColorStop(1, '#EF5350');
+        ctx.fillStyle = grad;
+        ctx.fillRect(gx, gy, gw, gh);
+
+        // Tick marks at "rotation count if max-power" — gives player a hint
+        // Each tick is the spin rate that yields exactly N full rotations at maxFlightDur.
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'center';
+        for (let n = 1; n <= 5; n++) {
+            const reqRate = (360 * n) / BOTTLE_THROW.maxFlightDur;
+            if (reqRate < BOTTLE_THROW.minSpinRate || reqRate > BOTTLE_THROW.maxSpinRate) continue;
+            const rel = (reqRate - BOTTLE_THROW.minSpinRate) / (BOTTLE_THROW.maxSpinRate - BOTTLE_THROW.minSpinRate);
+            const tx = gx + rel * gw;
+            ctx.fillStyle = (n === BOTTLE_THROW.targetRotations[state.level - 1]) ? '#FFD54F' : '#FFFFFF';
+            ctx.fillRect(tx - 1, gy - 4, 2, 8);
+            ctx.fillRect(tx - 1, gy + gh - 4, 2, 8);
+            ctx.fillText(n + 'x', tx, gy - 8);
+        }
+
+        // Needle
+        const needleX = gx + state.spinNeedle * gw;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(needleX - 2, gy - 8, 4, gh + 16);
+        ctx.beginPath();
+        ctx.moveTo(needleX - 8, gy + gh + 8);
+        ctx.lineTo(needleX + 8, gy + gh + 8);
+        ctx.lineTo(needleX, gy + gh);
+        ctx.closePath();
+        ctx.fill();
+
+        // Live rate readout
+        const liveRate = Math.round(BOTTLE_THROW.minSpinRate
+            + state.spinNeedle * (BOTTLE_THROW.maxSpinRate - BOTTLE_THROW.minSpinRate));
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 16px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(liveRate + '°/s   ( ticks = min spin for N rot at max power )', W / 2, gy + gh + 28);
+
+        // Prompt
+        ctx.fillStyle = '#FFD54F';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText('TAP SPACE TO LOCK SPIN', W / 2, gy - 36);
+    }
+
+    // --- Power meter (during power phase) ---
+    if (state.phase === 'power') {
+        const gx = W / 2 - 180;
+        const gy = 130;
+        const gw = 360;
+        const gh = 36;
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(gx - 10, gy - 24, gw + 20, gh + 50);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(gx, gy, gw, gh);
+
+        // Power fill
+        const pgrad = ctx.createLinearGradient(gx, gy, gx + gw, gy);
+        pgrad.addColorStop(0, '#42A5F5');
+        pgrad.addColorStop(0.5, '#66BB6A');
+        pgrad.addColorStop(0.85, '#FFEE58');
+        pgrad.addColorStop(1, '#EF5350');
+        ctx.fillStyle = pgrad;
+        ctx.fillRect(gx, gy, gw * state.power, gh);
+
+        // Flight-duration tick marks
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'center';
+        for (let i = 0; i <= 4; i++) {
+            const tx = gx + (i / 4) * gw;
+            ctx.fillRect(tx - 1, gy - 4, 2, gh + 8);
+            const dur = (BOTTLE_THROW.minFlightDur + (i / 4) * (BOTTLE_THROW.maxFlightDur - BOTTLE_THROW.minFlightDur));
+            ctx.fillText(dur.toFixed(1) + 's', tx, gy - 8);
+        }
+
+        // Live readout (wind-aware projected rotation)
+        const dur = BOTTLE_THROW.minFlightDur + state.power * (BOTTLE_THROW.maxFlightDur - BOTTLE_THROW.minFlightDur);
+        const baseRot = (state.spin * dur) / 360;
+        const windRot = (0.5 * state.wind * dur * dur) / 360;
+        const projectedRot = baseRot + windRot;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 16px monospace';
+        ctx.fillText(
+            'SPIN ' + state.spin + '°/s  •  FLIGHT ' + dur.toFixed(2) + 's  →  ' + projectedRot.toFixed(2) + ' rot',
+            W / 2, gy + gh + 28
+        );
+        // Wind contribution breakdown (small, in subtle color)
+        if (Math.abs(state.wind) > 0.01) {
+            ctx.font = '11px monospace';
+            ctx.fillStyle = state.wind > 0 ? '#A5D6A7' : '#EF9A9A';
+            ctx.fillText(
+                '(spin ' + baseRot.toFixed(2) + (windRot >= 0 ? ' + ' : ' − ') + Math.abs(windRot).toFixed(2) + ' wind)',
+                W / 2, gy + gh + 46
+            );
+        }
+
+        ctx.fillStyle = '#FFD54F';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(state.powerCharging ? 'RELEASE TO THROW!' : 'HOLD SPACE TO CHARGE', W / 2, gy - 36);
+    }
+
+    // --- Particles ---
+    if (state.particles && state.particles.length) {
+        state.particles.forEach(p => {
+            const alpha = Math.max(0, Math.min(1, p.life));
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 2 + p.life * 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        });
+    }
+
+    // --- Landing result banner ---
+    if (state.phase === 'landing') {
+        let title, subtitle, color;
+        if (state.levelCleared) {
+            const prec = state.levelPrecision;
+            if (prec >= 0.85) { title = 'PERFECT!'; color = '#FFD700'; }
+            else if (prec >= 0.5) { title = 'GREAT!'; color = '#66BB6A'; }
+            else { title = 'CLEARED!'; color = '#81D4FA'; }
+            subtitle = '+' + state.levelPoints + ' PTS  •  off by ' + Math.abs(state.levelOffset).toFixed(1) + '°';
+        } else {
+            title = 'MISSED!';
+            color = '#EF5350';
+            subtitle = 'off by ' + Math.abs(state.levelOffset).toFixed(1) + '°  •  needed ±' + tolerance + '°';
+        }
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(W / 2 - 200, 200, 400, 90);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(W / 2 - 200, 200, 400, 90);
+        ctx.fillStyle = color;
+        ctx.font = 'bold 36px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(title, W / 2, 232);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 14px monospace';
+        ctx.fillText(subtitle, W / 2, 268);
+        ctx.textBaseline = 'alphabetic';
+    }
+};
+
+// Helper — draws a bottle centered at (x, y), neck pointing up.
+function drawBottle(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    // Body (rounded rect approximated)
+    ctx.fillStyle = '#388E3C';
+    ctx.beginPath();
+    ctx.moveTo(-9, 22);
+    ctx.lineTo(9, 22);
+    ctx.lineTo(9, -6);
+    ctx.lineTo(5, -14);
+    ctx.lineTo(-5, -14);
+    ctx.lineTo(-9, -6);
+    ctx.closePath();
+    ctx.fill();
+    // Body shading on right
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+    ctx.beginPath();
+    ctx.moveTo(4, 22);
+    ctx.lineTo(9, 22);
+    ctx.lineTo(9, -6);
+    ctx.lineTo(5, -14);
+    ctx.lineTo(4, -14);
+    ctx.closePath();
+    ctx.fill();
+    // Highlight stripe (left)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.fillRect(-7, -10, 2, 28);
+    // Neck
+    ctx.fillStyle = '#2E7D32';
+    ctx.fillRect(-3, -22, 6, 8);
+    // Cap
+    ctx.fillStyle = '#FBC02D';
+    ctx.fillRect(-4, -26, 8, 5);
+    ctx.fillStyle = '#E68F00';
+    ctx.fillRect(-4, -23, 8, 1);
+    // Label
+    ctx.fillStyle = '#FFEB3B';
+    ctx.fillRect(-7, 0, 14, 10);
+    ctx.fillStyle = '#212121';
+    ctx.font = 'bold 6px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TFA', 0, 5);
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+}
 
 // ---- Input Handler ----
 const Input = {
